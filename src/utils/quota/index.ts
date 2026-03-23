@@ -3,6 +3,7 @@
  */
 
 export * from './constants';
+export * from './codex';
 export * from './parsers';
 export * from './resolvers';
 export * from './formatters';

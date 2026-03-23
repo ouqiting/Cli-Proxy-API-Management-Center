@@ -246,6 +246,30 @@ export interface CodexQuotaState {
   errorStatus?: number;
 }
 
+export type CodexBulkQueryStatus =
+  | 'idle'
+  | 'running'
+  | 'stopping'
+  | 'completed'
+  | 'terminated';
+
+export interface CodexBulkQueryFailedItem {
+  fileName: string;
+  message: string;
+  errorStatus?: number;
+}
+
+export interface CodexBulkQueryState {
+  hasEverRun: boolean;
+  status: CodexBulkQueryStatus;
+  total: number;
+  completed: number;
+  errorCount: number;
+  failedItems: CodexBulkQueryFailedItem[];
+  lastStartedAt: number | null;
+  lastFinishedAt: number | null;
+}
+
 // Kimi API payload types
 export interface KimiUsageDetail {
   used?: number;

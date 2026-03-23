@@ -6,15 +6,18 @@ import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { useAuthStore } from '@/stores';
+import { useCodexBulkQueryStore } from '@/stores/useCodexBulkQueryStore';
 import { authFilesApi, configFileApi } from '@/services/api';
 import {
   QuotaSection,
   ANTIGRAVITY_CONFIG,
   CLAUDE_CONFIG,
+  CodexBulkQueryModal,
   CODEX_CONFIG,
   GEMINI_CLI_CONFIG,
   KIMI_CONFIG
 } from '@/components/quota';
+import { Button } from '@/components/ui/Button';
 import type { AuthFileItem } from '@/types';
 import styles from './QuotaPage.module.scss';
 
@@ -25,8 +28,21 @@ export function QuotaPage() {
   const [files, setFiles] = useState<AuthFileItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [codexQueryModalOpen, setCodexQueryModalOpen] = useState(false);
 
   const disableControls = connectionStatus !== 'connected';
+  const codexBulkQueryState = useCodexBulkQueryStore((state) => ({
+    hasEverRun: state.hasEverRun,
+    status: state.status,
+    total: state.total,
+    completed: state.completed,
+    errorCount: state.errorCount,
+    failedItems: state.failedItems,
+    lastStartedAt: state.lastStartedAt,
+    lastFinishedAt: state.lastFinishedAt,
+  }));
+  const startCodexBulkQuery = useCodexBulkQueryStore((state) => state.startQuery);
+  const stopCodexBulkQuery = useCodexBulkQueryStore((state) => state.stopQuery);
 
   const loadConfig = useCallback(async () => {
     try {
@@ -88,6 +104,16 @@ export function QuotaPage() {
         files={files}
         loading={loading}
         disabled={disableControls}
+        extraHeaderActions={
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setCodexQueryModalOpen(true)}
+            disabled={disableControls}
+          >
+            {t('quota_management.codex_query_all')}
+          </Button>
+        }
       />
       <QuotaSection
         config={GEMINI_CLI_CONFIG}
@@ -100,6 +126,15 @@ export function QuotaPage() {
         files={files}
         loading={loading}
         disabled={disableControls}
+      />
+
+      <CodexBulkQueryModal
+        open={codexQueryModalOpen}
+        onClose={() => setCodexQueryModalOpen(false)}
+        disabled={disableControls}
+        queryState={codexBulkQueryState}
+        onStart={startCodexBulkQuery}
+        onStop={stopCodexBulkQuery}
       />
     </div>
   );

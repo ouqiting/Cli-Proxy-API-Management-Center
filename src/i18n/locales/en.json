@@ -1335,7 +1335,20 @@
     "description": "Monitor OAuth quota status for Antigravity, Codex, and Gemini CLI credentials.",
     "refresh_files": "Refresh auth files",
     "refresh_files_and_quota": "Refresh files & quota",
-    "card_idle_hint": "Use the top \"Refresh files & quota\" button to fetch the latest quota data."
+    "card_idle_hint": "Use the top \"Refresh files & quota\" button to fetch the latest quota data.",
+    "codex_query_all": "Query all quota",
+    "codex_query_modal_title": "Codex bulk query",
+    "codex_query_start": "Start query",
+    "codex_query_stop": "Stop query",
+    "codex_query_background": "Background query",
+    "codex_query_progress": "Completed {{completed}} / {{total}}",
+    "codex_query_error_count": "Errors {{count}}",
+    "codex_query_no_errors": "No failing credentials found",
+    "codex_query_no_files": "There are no queryable Codex auth files right now",
+    "codex_query_completed": "Codex bulk query finished with {{count}} errors",
+    "codex_query_completed_no_errors": "Codex bulk query finished with no failing credentials",
+    "codex_query_terminated": "Query terminated",
+    "codex_query_system_label": "System"
   },
   "system_info": {
     "title": "Management Center Info",

@@ -1335,7 +1335,20 @@
     "description": "集中查看 OAuth 额度与剩余情况",
     "refresh_files": "刷新认证文件",
     "refresh_files_and_quota": "刷新认证文件&额度",
-    "card_idle_hint": "请使用顶部“刷新认证文件&额度”按钮获取最新额度。"
+    "card_idle_hint": "请使用顶部“刷新认证文件&额度”按钮获取最新额度。",
+    "codex_query_all": "查询所有额度",
+    "codex_query_modal_title": "Codex 全量查询",
+    "codex_query_start": "开始查询",
+    "codex_query_stop": "终止查询",
+    "codex_query_background": "后台查询",
+    "codex_query_progress": "已完成 {{completed}} / {{total}}",
+    "codex_query_error_count": "报错 {{count}} 个",
+    "codex_query_no_errors": "未发现报错凭证",
+    "codex_query_no_files": "当前没有可查询的 Codex 认证文件",
+    "codex_query_completed": "Codex 全量查询完成，报错 {{count}} 个",
+    "codex_query_completed_no_errors": "Codex 全量查询完成，未发现报错凭证",
+    "codex_query_terminated": "查询已终止",
+    "codex_query_system_label": "系统"
   },
   "system_info": {
     "title": "管理中心信息",

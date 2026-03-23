@@ -1336,7 +1336,20 @@
     "description": "Следите за статусом квот OAuth для учётных данных Antigravity, Codex и Gemini CLI.",
     "refresh_files": "Обновить файлы авторизации",
     "refresh_files_and_quota": "Обновить файлы и квоты",
-    "card_idle_hint": "Используйте кнопку «Обновить файлы и квоты» сверху, чтобы загрузить актуальные данные по квотам."
+    "card_idle_hint": "Используйте кнопку «Обновить файлы и квоты» сверху, чтобы загрузить актуальные данные по квотам.",
+    "codex_query_all": "Проверить все квоты",
+    "codex_query_modal_title": "Массовая проверка Codex",
+    "codex_query_start": "Начать проверку",
+    "codex_query_stop": "Остановить",
+    "codex_query_background": "В фон",
+    "codex_query_progress": "Выполнено {{completed}} / {{total}}",
+    "codex_query_error_count": "Ошибок {{count}}",
+    "codex_query_no_errors": "Проблемных учётных данных не найдено",
+    "codex_query_no_files": "Сейчас нет доступных для проверки файлов авторизации Codex",
+    "codex_query_completed": "Массовая проверка Codex завершена, ошибок: {{count}}",
+    "codex_query_completed_no_errors": "Массовая проверка Codex завершена без ошибок",
+    "codex_query_terminated": "Проверка остановлена",
+    "codex_query_system_label": "Система"
   },
   "system_info": {
     "title": "Информация о центре управления",

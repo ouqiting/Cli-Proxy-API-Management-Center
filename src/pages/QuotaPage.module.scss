@@ -565,3 +565,93 @@
     line-height: 1.6;
   }
 }
+
+.codexQueryModal {
+  :global(.modal-body) {
+    padding-top: $spacing-sm;
+  }
+
+  :global(.modal-footer) {
+    display: flex;
+    justify-content: flex-end;
+    gap: $spacing-sm;
+    flex-wrap: wrap;
+  }
+}
+
+.codexQueryBlank {
+  min-height: 220px;
+}
+
+.codexQueryPanel {
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-md;
+}
+
+.codexQueryStats {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
+  padding: $spacing-sm $spacing-md;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-md;
+  background-color: var(--bg-secondary);
+}
+
+.codexQueryProgress {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.codexQueryErrorCount {
+  font-size: 13px;
+  color: var(--danger-color);
+}
+
+.codexQueryHint {
+  padding: $spacing-md;
+  border: 1px dashed var(--border-color);
+  border-radius: $radius-md;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+  background-color: var(--bg-secondary);
+}
+
+.codexQueryResultList {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+  max-height: 360px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.codexQueryResultItem {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: $spacing-sm $spacing-md;
+  border-radius: $radius-md;
+  border: 1px solid rgba($error-color, 0.28);
+  background-color: rgba($error-color, 0.08);
+}
+
+.codexQueryResultName {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.codexQueryResultMessage {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--danger-color);
+  word-break: break-word;
+}
