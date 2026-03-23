@@ -31,16 +31,14 @@ export function QuotaPage() {
   const [codexQueryModalOpen, setCodexQueryModalOpen] = useState(false);
 
   const disableControls = connectionStatus !== 'connected';
-  const codexBulkQueryState = useCodexBulkQueryStore((state) => ({
-    hasEverRun: state.hasEverRun,
-    status: state.status,
-    total: state.total,
-    completed: state.completed,
-    errorCount: state.errorCount,
-    failedItems: state.failedItems,
-    lastStartedAt: state.lastStartedAt,
-    lastFinishedAt: state.lastFinishedAt,
-  }));
+  const codexHasEverRun = useCodexBulkQueryStore((state) => state.hasEverRun);
+  const codexQueryStatus = useCodexBulkQueryStore((state) => state.status);
+  const codexQueryTotal = useCodexBulkQueryStore((state) => state.total);
+  const codexQueryCompleted = useCodexBulkQueryStore((state) => state.completed);
+  const codexQueryErrorCount = useCodexBulkQueryStore((state) => state.errorCount);
+  const codexQueryFailedItems = useCodexBulkQueryStore((state) => state.failedItems);
+  const codexQueryLastStartedAt = useCodexBulkQueryStore((state) => state.lastStartedAt);
+  const codexQueryLastFinishedAt = useCodexBulkQueryStore((state) => state.lastFinishedAt);
   const startCodexBulkQuery = useCodexBulkQueryStore((state) => state.startQuery);
   const stopCodexBulkQuery = useCodexBulkQueryStore((state) => state.stopQuery);
 
@@ -132,7 +130,16 @@ export function QuotaPage() {
         open={codexQueryModalOpen}
         onClose={() => setCodexQueryModalOpen(false)}
         disabled={disableControls}
-        queryState={codexBulkQueryState}
+        queryState={{
+          hasEverRun: codexHasEverRun,
+          status: codexQueryStatus,
+          total: codexQueryTotal,
+          completed: codexQueryCompleted,
+          errorCount: codexQueryErrorCount,
+          failedItems: codexQueryFailedItems,
+          lastStartedAt: codexQueryLastStartedAt,
+          lastFinishedAt: codexQueryLastFinishedAt,
+        }}
         onStart={startCodexBulkQuery}
         onStop={stopCodexBulkQuery}
       />
