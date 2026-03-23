@@ -1,4 +1,4 @@
-# CLI Proxy API Management Center (CPAMC)
+# CLI Proxy API Management Center Ouqiting (CPAMC)
 
 > A Web management interface based on the official repository with custom modifications
 

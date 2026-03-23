@@ -55,8 +55,8 @@
     "unsaved_changes_message": "你有未保存的更改，离开后将丢失这些更改。确定要离开吗？"
   },
   "title": {
-    "main": "CLI Proxy API Management Center",
-    "login": "CLI Proxy API Management Center",
+    "main": "CLI Proxy API Management Center Ouqiting",
+    "login": "CLI Proxy API Management Center Ouqiting",
     "abbr": "CPAMC"
   },
   "splash": {
@@ -1352,7 +1352,7 @@
   },
   "system_info": {
     "title": "管理中心信息",
-    "about_title": "CLI Proxy API Management Center",
+    "about_title": "CLI Proxy API Management Center Ouqiting",
     "connection_status_title": "连接状态",
     "api_status_label": "API 状态:",
     "config_status_label": "配置状态:",

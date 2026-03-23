@@ -55,8 +55,8 @@
     "unsaved_changes_message": "You have unsaved changes. Leaving now will discard them. Do you want to leave?"
   },
   "title": {
-    "main": "CLI Proxy API Management Center",
-    "login": "CLI Proxy API Management Center",
+    "main": "CLI Proxy API Management Center Ouqiting",
+    "login": "CLI Proxy API Management Center Ouqiting",
     "abbr": "CPAMC"
   },
   "splash": {
@@ -122,7 +122,7 @@
   },
   "dashboard": {
     "title": "Dashboard",
-    "subtitle": "Welcome to CLI Proxy API Management Center",
+    "subtitle": "Welcome to CLI Proxy API Management Center Ouqiting",
     "openai_providers": "OpenAI Providers",
     "quick_actions": "Quick Actions",
     "current_config": "Current Configuration",
@@ -1352,7 +1352,7 @@
   },
   "system_info": {
     "title": "Management Center Info",
-    "about_title": "CLI Proxy API Management Center",
+    "about_title": "CLI Proxy API Management Center Ouqiting",
     "connection_status_title": "Connection Status",
     "api_status_label": "API Status:",
     "config_status_label": "Config Status:",
