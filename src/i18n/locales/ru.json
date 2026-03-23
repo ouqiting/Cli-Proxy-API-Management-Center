@@ -1349,7 +1349,13 @@
     "codex_query_completed": "Массовая проверка Codex завершена, ошибок: {{count}}",
     "codex_query_completed_no_errors": "Массовая проверка Codex завершена без ошибок",
     "codex_query_terminated": "Проверка остановлена",
-    "codex_query_system_label": "Система"
+    "codex_query_system_label": "Система",
+    "codex_query_delete_failed": "Удалить ошибочные конфиги",
+    "codex_query_delete_confirm": "Удалить {{count}} проблемных файлов авторизации Codex? Это действие нельзя отменить.",
+    "codex_query_delete_none": "Нет ошибочных конфигов для удаления",
+    "codex_query_delete_success": "Удалено проблемных конфигов: {{count}}",
+    "codex_query_delete_partial": "Удалено {{success}}, не удалось {{failed}}",
+    "codex_query_delete_failed_notice": "Не удалось удалить проблемные конфиги"
   },
   "system_info": {
     "title": "Информация о центре управления",

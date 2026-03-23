@@ -9,22 +9,27 @@ interface CodexBulkQueryModalProps {
   open: boolean;
   onClose: () => void;
   disabled: boolean;
+  deletingFailedConfigs?: boolean;
   queryState: CodexBulkQueryState;
   onStart: () => Promise<void> | void;
   onStop: () => void;
+  onDeleteFailed: () => Promise<void> | void;
 }
 
 export function CodexBulkQueryModal({
   open,
   onClose,
   disabled,
+  deletingFailedConfigs = false,
   queryState,
   onStart,
   onStop,
+  onDeleteFailed,
 }: CodexBulkQueryModalProps) {
   const { t } = useTranslation();
 
   const isRunning = queryState.status === 'running' || queryState.status === 'stopping';
+  const canDeleteFailed = !disabled && !isRunning && queryState.failedItems.length > 0;
   const progressLabel = useMemo(
     () =>
       t('quota_management.codex_query_progress', {
@@ -50,6 +55,15 @@ export function CodexBulkQueryModal({
         disabled={disabled || queryState.status !== 'running'}
       >
         {t('quota_management.codex_query_stop')}
+      </Button>
+      <Button
+        variant="danger"
+        size="sm"
+        onClick={() => void onDeleteFailed()}
+        disabled={!canDeleteFailed}
+        loading={deletingFailedConfigs}
+      >
+        {t('quota_management.codex_query_delete_failed')}
       </Button>
       <Button variant="secondary" size="sm" onClick={onClose}>
         {t('quota_management.codex_query_background')}

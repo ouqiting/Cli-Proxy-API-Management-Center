@@ -20,6 +20,7 @@ import {
 interface CodexBulkQueryStoreState extends CodexBulkQueryState {
   startQuery: () => Promise<void>;
   stopQuery: () => void;
+  removeFailedItems: (fileNames: string[]) => void;
 }
 
 const BATCH_SIZE = 10;
@@ -321,5 +322,29 @@ export const useCodexBulkQueryStore = create<CodexBulkQueryStoreState>((set, get
 
     set({ status: 'stopping' });
     activeAbortController.abort();
+  },
+
+  removeFailedItems: (fileNames) => {
+    const normalizedNames = Array.from(
+      new Set(fileNames.map((name) => String(name ?? '').trim()).filter(Boolean))
+    );
+    if (normalizedNames.length === 0) {
+      return;
+    }
+
+    const targetNames = new Set(normalizedNames);
+    set((state) => {
+      const removedCount = state.failedItems.filter((item) => targetNames.has(item.fileName)).length;
+      if (removedCount === 0) {
+        return {};
+      }
+
+      return {
+        failedItems: state.failedItems.filter((item) => !targetNames.has(item.fileName)),
+        errorCount: Math.max(0, state.errorCount - removedCount),
+        total: Math.max(0, state.total - removedCount),
+        completed: Math.max(0, state.completed - removedCount),
+      };
+    });
   },
 }));

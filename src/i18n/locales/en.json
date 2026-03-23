@@ -1348,7 +1348,13 @@
     "codex_query_completed": "Codex bulk query finished with {{count}} errors",
     "codex_query_completed_no_errors": "Codex bulk query finished with no failing credentials",
     "codex_query_terminated": "Query terminated",
-    "codex_query_system_label": "System"
+    "codex_query_system_label": "System",
+    "codex_query_delete_failed": "Delete failing configs",
+    "codex_query_delete_confirm": "Delete {{count}} failing Codex auth files? This cannot be undone.",
+    "codex_query_delete_none": "There are no failing configs to delete",
+    "codex_query_delete_success": "Deleted {{count}} failing configs",
+    "codex_query_delete_partial": "Deleted {{success}}, failed {{failed}}",
+    "codex_query_delete_failed_notice": "Failed to delete failing configs"
   },
   "system_info": {
     "title": "Management Center Info",

@@ -1348,7 +1348,13 @@
     "codex_query_completed": "Codex 全量查询完成，报错 {{count}} 个",
     "codex_query_completed_no_errors": "Codex 全量查询完成，未发现报错凭证",
     "codex_query_terminated": "查询已终止",
-    "codex_query_system_label": "系统"
+    "codex_query_system_label": "系统",
+    "codex_query_delete_failed": "删除报错配置",
+    "codex_query_delete_confirm": "确定删除 {{count}} 个报错的 Codex 认证文件吗？此操作不可恢复。",
+    "codex_query_delete_none": "当前没有可删除的报错配置",
+    "codex_query_delete_success": "已删除 {{count}} 个报错配置",
+    "codex_query_delete_partial": "已删除 {{success}} 个，失败 {{failed}} 个",
+    "codex_query_delete_failed_notice": "删除报错配置失败"
   },
   "system_info": {
     "title": "管理中心信息",
