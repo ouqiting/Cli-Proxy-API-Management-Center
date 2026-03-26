@@ -654,8 +654,27 @@
     "plan_plus": "Plus",
     "plan_team": "Team",
     "plan_free": "Free",
-    "plan_pro": "Pro"
-  },
+      "plan_pro": "Pro"
+    },
+    "vercel_quota": {
+      "title": "Vercel 额度",
+      "empty_title": "暂无 Vercel 提供商",
+      "empty_desc": "在 OpenAI 兼容提供商中配置 base URL 为 https://ai-gateway.vercel.sh/v1 的 Vercel 提供商后即可查看额度。",
+      "idle": "点击此处刷新额度",
+      "loading": "正在加载额度...",
+      "load_failed": "额度获取失败：{{message}}",
+      "missing_api_key": "Vercel 提供商条目缺少 API Key",
+      "empty_data": "暂无额度数据",
+      "status_label": "状态",
+      "status_available": "可用",
+      "status_exhausted": "余额耗尽",
+      "credits_label": "Credits",
+      "total_balance_label": "总余额",
+      "balance_amount": "余额 {{value}}",
+      "used_label": "已使用",
+      "used_amount": "{{value}}",
+      "total_amount": "总额 {{value}}"
+    },
   "gemini_cli_quota": {
     "title": "Gemini CLI 额度",
     "empty_title": "暂无 Gemini CLI 认证",

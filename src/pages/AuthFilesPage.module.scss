@@ -78,6 +78,98 @@
   margin-bottom: $spacing-md;
 }
 
+.keyCommandModal {
+  :global(.modal-body) {
+    padding-top: $spacing-sm;
+  }
+}
+
+.keyCommandFooter {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.keyCommandBody {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-lg;
+}
+
+.keyCommandPlatformRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
+}
+
+.keyCommandPlatformLabel {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.keyCommandPlatformToggle {
+  display: flex;
+  align-items: center;
+  gap: $spacing-xs;
+  flex-wrap: wrap;
+}
+
+.keyCommandInputGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: $spacing-md;
+
+  :global(.form-group) {
+    margin: 0;
+  }
+
+  @include mobile {
+    grid-template-columns: 1fr;
+  }
+}
+
+.keyCommandSection {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+}
+
+.keyCommandSectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-sm;
+  flex-wrap: wrap;
+}
+
+.keyCommandSectionTitle {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.keyCommandCodeBlock {
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 82%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-secondary) 92%, transparent), transparent),
+    color-mix(in srgb, var(--bg-primary) 88%, transparent);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+
+  code {
+    font-family: 'Cascadia Code', 'Fira Code', 'SFMono-Regular', Consolas, monospace;
+  }
+}
+
 // 筛选区域
 .filterSection {
   display: grid;

@@ -2,23 +2,22 @@
 
 > 一个基于官方仓库二次创作的 Web 管理界面
 
-**[English](README_EN.md) | [中文](README.md)**
-
 ---
 
 ## 关于本项目
 
-本项目是基于官方 [CLI Proxy API WebUI](https://github.com/router-for-me/Cli-Proxy-API-Management-Center) 进行开发的日志监控和数据可视化管理界面
+本项目是基于官方 [CLI Proxy API WebUI](https://github.com/router-for-me/Cli-Proxy-API-Management-Center) 进行开发的管理界面
 
 ### 与官方版本的区别
 
-本版本与官方版本其他功能保持一致，主要差异在于**新增监控中心**，对日志分析和查看的增强
+本版本与官方版本其他功能保持一致，主要差异在于**新增codex凭证一件查询和删除**，对vercel密钥的查看
 
 ### 界面预览
 
 管理界面展示
 
-![Dashboard Preview](dashboard-preview.png)
+![Codex Preview](codex.jpg)
+![delete Preview](delete.jpg)
 
 ---
 
@@ -30,7 +29,7 @@
 
 ```yaml
 remote-management:
-  panel-github-repository: "https://github.com/kongkongyo/Cli-Proxy-API-Management-Center"
+  panel-github-repository: "https://github.com/ouqiting/Cli-Proxy-API-Management-Center"
 ```
 
 配置完成后，重启 CLI Proxy API 服务，访问 `http://<host>:<api_port>/management.html` 即可查看管理界面
@@ -41,108 +40,10 @@ remote-management:
 
 ## 主要功能
 
-### 监控中心 - 核心新增功能
+### codex一键配置 - 核心新增功能
 
-这是本管理界面相对于官方版本的唯一新增功能，提供了全方位的数据可视化和监控能力
+这是本管理界面相对于官方版本的新增功能，提供了codex的一键查询，删除报错凭证的功能
 
-> 注意：CLI Proxy API 主程序目前没有数据持久化功能，重启程序后统计数据会丢失。需要先通过 API 使用相关服务产生数据后，才能在监控中心看到统计信息。
-
-#### KPI 指标仪表盘
-
-实时展示核心运营指标，支持按时间范围筛选：
-- **请求数**：总请求数、成功/失败统计、成功率百分比
-- **Token 数**：总 Token 数、输入 Token、输出 Token
-- **平均 TPM**：每分钟 Token 使用量
-- **平均 RPM**：每分钟请求数
-- **日均 RPD**：日均请求数
-
-所有指标都会根据选择的时间范围（今天/7天/14天/30天）动态计算，实时更新
-
-#### 模型用量分布
-
-直观的饼图展示不同模型的使用占比：
-- 按请求数分布
-- 按 Token 数分布
-- 可切换查看请求占比或 Token 占比
-
-#### 每日趋势分析
-
-详细的时间序列图表，展示每日用量变化趋势：
-- 请求数趋势曲线
-- 输入 Token 趋势
-- 输出 Token 趋势
-- 思考 Token 趋势（如支持）
-- 缓存 Token 趋势
-
-#### 每小时分析
-
-两个详细的小时级图表，帮助定位高峰时段：
-
-**每小时模型请求分布**
-- 柱状图展示不同模型在各小时的请求数
-- 支持最近 6 小时/12 小时/24 小时/全部视图切换
-
-**每小时 Token 用量**
-- 堆叠柱状图展示 Token 使用构成
-- 区分输入 Token、输出 Token、思考 Token、缓存 Token
-
-#### 渠道统计
-
-详细表格展示各渠道（API Key/模型）的使用情况：
-- 可按全部渠道/特定渠道筛选
-- 可按全部模型/特定模型筛选
-- 可按全部状态/仅成功/仅失败筛选
-- 显示渠道名称、请求数、成功率
-- 点击展开查看该渠道下各模型的详细统计
-- 显示最近请求状态（最近 10 次请求的迷你状态条）
-- 最近请求时间
-
-#### 失败来源分析
-
-帮助定位问题渠道和模型：
-- 按渠道统计失败次数
-- 显示最近失败时间
-- 列出主要失败的模型
-- 点击展开查看该渠道下所有失败的请求详情
-
-#### 请求日志 - 高级功能
-
-功能强大的请求日志表格，支持海量数据流畅浏览
-
-**多维度筛选**
-- 按 API Key 筛选
-- 按提供商类型筛选（OpenAI/Gemini/Claude 等）
-- 按模型名称筛选
-- 按来源渠道筛选
-- 按请求状态筛选（全部/成功/失败）
-
-**独立时间范围**
-- 支持今天/7天/14天/30天/自定义日期范围
-- 与主页面时间范围独立控制
-
-**虚拟滚动**
-- 支持 10 万+ 条日志流畅浏览
-- 显示当前可见范围统计
-- 性能优化，只渲染可见行
-
-**智能信息展示**
-- 自动匹配 API Key 到提供商名称（基于配置信息）
-- 完整的渠道信息（提供商名称 + 掩码后的密钥）
-- 请求类型/模型名称/请求状态
-- 最近 10 次请求的状态可视化（绿点=成功，红点=失败）
-- 成功率百分比
-- 总请求数/输入 Token/输出 Token/总 Token
-- 请求时间（完整时间戳）
-
-**自动刷新**
-- 支持手动刷新 / 5秒 / 10秒 / 15秒 / 30秒 / 60秒 自动刷新
-- 倒计时显示下次刷新时间
-- 独立数据加载，不阻塞主页面
-
-**一键禁用模型**
-- 支持直接在日志中禁用某渠道的某个模型
-- 只对支持该操作的渠道类型生效
-- 不支持时显示提示和手动操作指南
 
 ---
 
@@ -261,7 +162,7 @@ https://example.com:8317
 A: 在 CLI Proxy API 的配置文件中添加以下配置即可
 ```yaml
 remote-management:
-  panel-github-repository: "https://github.com/kongkongyo/CLIProxyAPI-Web-Dashboard"
+  panel-github-repository: "https://github.com/ouqiting/Cli-Proxy-API-Management-Center"
 ```
 
 **Q: 无法连接到服务器？**
@@ -284,13 +185,6 @@ A: 可能是服务器版本太旧，升级到最新版本的 CLI Proxy API
 
 A: 测试是在浏览器端执行的，可能会受到 CORS 限制，失败不一定代表服务器端不能用
 
-**Q: 这个版本和官方版本有什么区别？**
-
-A: 主要区别有两个：
-1. **界面风格**：全新的视觉设计，UI 细节更精致
-2. **监控中心**：这是唯一新增的功能模块，提供了强大的数据可视化和监控能力，包括 KPI 仪表盘、模型用量分布、趋势分析、小时级图表、渠道统计、失败分析和高级请求日志等功能
-
-其他所有功能与官方版本保持一致
 
 ---
 
@@ -298,7 +192,7 @@ A: 主要区别有两个：
 
 - **官方主程序**: https://github.com/router-for-me/CLIProxyAPI
 - **官方 WebUI**: https://github.com/router-for-me/Cli-Proxy-API-Management-Center
-- **本仓库**: https://github.com/kongkongyo/CLIProxyAPI-Web-Dashboard
+- **本仓库**: https://github.com/ouqiting/Cli-Proxy-API-Management-Center
 
 ## 许可证
 

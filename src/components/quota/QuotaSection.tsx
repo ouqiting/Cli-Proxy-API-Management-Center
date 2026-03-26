@@ -96,6 +96,7 @@ interface QuotaSectionProps<TState extends QuotaStatusState, TData> {
   files: AuthFileItem[];
   loading: boolean;
   disabled: boolean;
+  leadingHeaderActions?: ReactNode;
   extraHeaderActions?: ReactNode;
 }
 
@@ -104,6 +105,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
   files,
   loading,
   disabled,
+  leadingHeaderActions,
   extraHeaderActions
 }: QuotaSectionProps<TState, TData>) {
   const { t } = useTranslation();
@@ -223,6 +225,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
       title={titleNode}
       extra={
         <div className={styles.headerActions}>
+          {leadingHeaderActions}
           <div className={styles.viewModeToggle}>
             <Button
               variant={effectiveViewMode === 'paged' ? 'primary' : 'secondary'}

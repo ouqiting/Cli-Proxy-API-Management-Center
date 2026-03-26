@@ -246,6 +246,15 @@ export interface CodexQuotaState {
   errorStatus?: number;
 }
 
+export interface VercelQuotaState {
+  status: 'idle' | 'loading' | 'success' | 'error';
+  balance: number | null;
+  totalUsed: number | null;
+  remainingPercent: number | null;
+  error?: string;
+  errorStatus?: number;
+}
+
 export type CodexBulkQueryStatus =
   | 'idle'
   | 'running'

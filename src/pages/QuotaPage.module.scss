@@ -102,9 +102,17 @@
   align-items: center;
 }
 
+.headerSummaryText {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
 .antigravityGrid,
 .claudeGrid,
 .codexGrid,
+.vercelGrid,
 .geminiCliGrid,
 .kimiGrid {
   display: grid;
@@ -119,6 +127,7 @@
 .antigravityControls,
 .claudeControls,
 .codexControls,
+.vercelControls,
 .geminiCliControls,
 .kimiControls {
   display: flex;
@@ -131,6 +140,7 @@
 .antigravityControl,
 .claudeControl,
 .codexControl,
+.vercelControl,
 .geminiCliControl,
 .kimiControl {
   display: flex;
@@ -168,6 +178,12 @@
   background-image: linear-gradient(180deg,
       rgba(234, 231, 255, 0.18),
       rgba(234, 231, 255, 0));
+}
+
+.vercelCard {
+  background-image: linear-gradient(180deg,
+      rgba(236, 238, 242, 0.22),
+      rgba(236, 238, 242, 0));
 }
 
 .geminiCliCard {

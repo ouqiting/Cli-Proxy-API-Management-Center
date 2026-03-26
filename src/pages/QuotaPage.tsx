@@ -1,32 +1,55 @@
 /**
- * Quota management page - coordinates the four quota sections.
+ * Quota management page - coordinates the quota sections.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { useAuthStore, useNotificationStore, useQuotaStore } from '@/stores';
 import { useCodexBulkQueryStore } from '@/stores/useCodexBulkQueryStore';
-import { authFilesApi, configFileApi } from '@/services/api';
+import { authFilesApi, configFileApi, providersApi } from '@/services/api';
 import {
   QuotaSection,
   ANTIGRAVITY_CONFIG,
   CLAUDE_CONFIG,
   CodexBulkQueryModal,
   CODEX_CONFIG,
+  VERCEL_CONFIG,
   GEMINI_CLI_CONFIG,
   KIMI_CONFIG
 } from '@/components/quota';
 import { Button } from '@/components/ui/Button';
-import type { AuthFileItem } from '@/types';
+import type { AuthFileItem, OpenAIProviderConfig } from '@/types';
+import { maskApiKey } from '@/utils/format';
 import styles from './QuotaPage.module.scss';
+
+const VERCEL_GATEWAY_BASE_URL = 'https://ai-gateway.vercel.sh/v1';
+
+const normalizeQuotaOpenAIBaseUrl = (baseUrl: string): string => {
+  let trimmed = String(baseUrl || '').trim();
+  if (!trimmed) return '';
+  trimmed = trimmed.replace(/\/?v0\/management\/?$/i, '');
+  trimmed = trimmed.replace(/\/+$/g, '');
+  if (!/^https?:\/\//i.test(trimmed)) {
+    trimmed = `http://${trimmed}`;
+  }
+  return trimmed.toLowerCase();
+};
+
+const formatQuotaAmount = (value: number) =>
+  value.toLocaleString(undefined, {
+    minimumFractionDigits: Math.abs(value % 1) < 0.000_001 ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
 
 export function QuotaPage() {
   const { t } = useTranslation();
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
 
   const [files, setFiles] = useState<AuthFileItem[]>([]);
+  const [openAIProviders, setOpenAIProviders] = useState<OpenAIProviderConfig[]>([]);
   const [loading, setLoading] = useState(true);
+  const [openAIProvidersLoading, setOpenAIProvidersLoading] = useState(true);
   const [error, setError] = useState('');
   const [codexQueryModalOpen, setCodexQueryModalOpen] = useState(false);
   const [deletingFailedConfigs, setDeletingFailedConfigs] = useState(false);
@@ -45,6 +68,46 @@ export function QuotaPage() {
   const startCodexBulkQuery = useCodexBulkQueryStore((state) => state.startQuery);
   const stopCodexBulkQuery = useCodexBulkQueryStore((state) => state.stopQuery);
   const removeFailedCodexItems = useCodexBulkQueryStore((state) => state.removeFailedItems);
+  const vercelQuota = useQuotaStore((state) => state.vercelQuota);
+
+  const vercelFiles = useMemo(() => {
+    const items: AuthFileItem[] = [];
+
+    openAIProviders.forEach((provider, providerIndex) => {
+      const normalizedBaseUrl = normalizeQuotaOpenAIBaseUrl(provider.baseUrl);
+      if (normalizedBaseUrl !== VERCEL_GATEWAY_BASE_URL) {
+        return;
+      }
+
+      (provider.apiKeyEntries || []).forEach((entry, entryIndex) => {
+        const apiKey = String(entry.apiKey ?? '').trim();
+        if (!apiKey) return;
+
+        const providerName = String(provider.name ?? '').trim() || `Vercel #${providerIndex + 1}`;
+        const maskedKey = maskApiKey(apiKey);
+        items.push({
+          name: `${providerName} - Key #${entryIndex + 1} (${maskedKey})`,
+          type: 'vercel',
+          provider: 'vercel',
+          apiKey,
+          providerName,
+          providerHeaders: provider.headers ?? {},
+          entryHeaders: entry.headers ?? {},
+        });
+      });
+    });
+
+    return items;
+  }, [openAIProviders]);
+
+  const vercelTotalBalance = useMemo(() => {
+    const values = Object.values(vercelQuota);
+    const successful = values.filter(
+      (item) => item.status === 'success' && typeof item.balance === 'number'
+    );
+    if (successful.length === 0) return null;
+    return successful.reduce((sum, item) => sum + (item.balance ?? 0), 0);
+  }, [vercelQuota]);
 
   const loadConfig = useCallback(async () => {
     try {
@@ -69,9 +132,22 @@ export function QuotaPage() {
     }
   }, [t]);
 
+  const loadOpenAIProviders = useCallback(async () => {
+    setOpenAIProvidersLoading(true);
+    try {
+      const data = await providersApi.getOpenAIProviders();
+      setOpenAIProviders(data || []);
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : t('notification.refresh_failed');
+      setError((prev) => prev || errorMessage);
+    } finally {
+      setOpenAIProvidersLoading(false);
+    }
+  }, [t]);
+
   const handleHeaderRefresh = useCallback(async () => {
-    await Promise.all([loadConfig(), loadFiles()]);
-  }, [loadConfig, loadFiles]);
+    await Promise.all([loadConfig(), loadFiles(), loadOpenAIProviders()]);
+  }, [loadConfig, loadFiles, loadOpenAIProviders]);
 
   const handleDeleteFailedCodexConfigs = useCallback(() => {
     if (deletingFailedConfigs) return;
@@ -169,7 +245,8 @@ export function QuotaPage() {
   useEffect(() => {
     loadFiles();
     loadConfig();
-  }, [loadFiles, loadConfig]);
+    loadOpenAIProviders();
+  }, [loadFiles, loadConfig, loadOpenAIProviders]);
 
   return (
     <div className={styles.container}>
@@ -180,18 +257,6 @@ export function QuotaPage() {
 
       {error && <div className={styles.errorBox}>{error}</div>}
 
-      <QuotaSection
-        config={CLAUDE_CONFIG}
-        files={files}
-        loading={loading}
-        disabled={disableControls}
-      />
-      <QuotaSection
-        config={ANTIGRAVITY_CONFIG}
-        files={files}
-        loading={loading}
-        disabled={disableControls}
-      />
       <QuotaSection
         config={CODEX_CONFIG}
         files={files}
@@ -207,6 +272,36 @@ export function QuotaPage() {
             {t('quota_management.codex_query_all')}
           </Button>
         }
+      />
+      {vercelFiles.length > 0 ? (
+        <QuotaSection
+          config={VERCEL_CONFIG}
+          files={vercelFiles}
+          loading={openAIProvidersLoading}
+          disabled={disableControls}
+          leadingHeaderActions={
+            vercelTotalBalance !== null ? (
+              <div className={styles.headerSummaryText}>
+                {t('vercel_quota.total_balance_label', {
+                  defaultValue: '总余额',
+                })}
+                : {formatQuotaAmount(vercelTotalBalance)}
+              </div>
+            ) : undefined
+          }
+        />
+      ) : null}
+      <QuotaSection
+        config={CLAUDE_CONFIG}
+        files={files}
+        loading={loading}
+        disabled={disableControls}
+      />
+      <QuotaSection
+        config={ANTIGRAVITY_CONFIG}
+        files={files}
+        loading={loading}
+        disabled={disableControls}
       />
       <QuotaSection
         config={GEMINI_CLI_CONFIG}

@@ -25,6 +25,7 @@ import type {
   GeminiCliUserTier,
   KimiQuotaRow,
   KimiQuotaState,
+  VercelQuotaState,
 } from '@/types';
 import { apiCallApi, authFilesApi, getApiCallErrorMessage } from '@/services/api';
 import { useQuotaStore } from '@/stores';
@@ -73,9 +74,10 @@ import styles from '@/pages/QuotaPage.module.scss';
 
 type QuotaUpdater<T> = T | ((prev: T) => T);
 
-type QuotaType = 'antigravity' | 'claude' | 'codex' | 'gemini-cli' | 'kimi';
+type QuotaType = 'antigravity' | 'claude' | 'codex' | 'gemini-cli' | 'kimi' | 'vercel';
 
 const DEFAULT_ANTIGRAVITY_PROJECT_ID = 'bamboo-precept-lgxtn';
+const VERCEL_CREDITS_URL = 'https://ai-gateway.vercel.sh/v1/credits';
 const geminiCliSupplementaryRequestIds = new Map<string, number>();
 const geminiCliSupplementaryCache = new Map<
   string,
@@ -86,11 +88,13 @@ export interface QuotaStore {
   antigravityQuota: Record<string, AntigravityQuotaState>;
   claudeQuota: Record<string, ClaudeQuotaState>;
   codexQuota: Record<string, CodexQuotaState>;
+  vercelQuota: Record<string, VercelQuotaState>;
   geminiCliQuota: Record<string, GeminiCliQuotaState>;
   kimiQuota: Record<string, KimiQuotaState>;
   setAntigravityQuota: (updater: QuotaUpdater<Record<string, AntigravityQuotaState>>) => void;
   setClaudeQuota: (updater: QuotaUpdater<Record<string, ClaudeQuotaState>>) => void;
   setCodexQuota: (updater: QuotaUpdater<Record<string, CodexQuotaState>>) => void;
+  setVercelQuota: (updater: QuotaUpdater<Record<string, VercelQuotaState>>) => void;
   setGeminiCliQuota: (updater: QuotaUpdater<Record<string, GeminiCliQuotaState>>) => void;
   setKimiQuota: (updater: QuotaUpdater<Record<string, KimiQuotaState>>) => void;
   clearQuotaCache: () => void;
@@ -589,6 +593,182 @@ const renderCodexItems = (
   return h(Fragment, null, ...nodes);
 };
 
+const getStringRecord = (value: unknown): Record<string, string> => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.entries(value as Record<string, unknown>).reduce<Record<string, string>>(
+    (acc, [key, raw]) => {
+      const normalizedKey = String(key ?? '').trim();
+      const normalizedValue = String(raw ?? '').trim();
+      if (!normalizedKey || !normalizedValue) return acc;
+      acc[normalizedKey] = normalizedValue;
+      return acc;
+    },
+    {}
+  );
+};
+
+const hasHeaderCaseInsensitive = (headers: Record<string, string>, name: string) => {
+  const target = name.toLowerCase();
+  return Object.keys(headers).some((key) => key.toLowerCase() === target);
+};
+
+const mergeHeaderRecords = (...records: Array<Record<string, string>>) => {
+  const merged = new Map<string, { key: string; value: string }>();
+
+  records.forEach((record) => {
+    Object.entries(record).forEach(([key, value]) => {
+      const normalizedKey = key.toLowerCase();
+      merged.set(normalizedKey, { key, value });
+    });
+  });
+
+  return Object.fromEntries(Array.from(merged.values()).map(({ key, value }) => [key, value]));
+};
+
+const parseVercelCreditsPayload = (payload: unknown): { balance: number; totalUsed: number } | null => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return null;
+  }
+
+  const record = payload as Record<string, unknown>;
+  const balance = normalizeNumberValue(record.balance);
+  const totalUsed = normalizeNumberValue(record.total_used ?? record.totalUsed) ?? 0;
+
+  if (balance === null) {
+    return null;
+  }
+
+  return { balance, totalUsed };
+};
+
+const formatVercelCredits = (value: number | null): string => {
+  if (value === null) return '--';
+
+  const rounded = Math.abs(value % 1) < 0.000_001 ? 0 : 2;
+  return value.toLocaleString(undefined, {
+    minimumFractionDigits: rounded,
+    maximumFractionDigits: rounded,
+  });
+};
+
+const fetchVercelQuota = async (
+  file: AuthFileItem,
+  t: TFunction
+): Promise<{ balance: number; totalUsed: number; remainingPercent: number }> => {
+  const apiKey = normalizeStringValue(file.apiKey);
+  const providerHeaders = getStringRecord(file.providerHeaders);
+  const entryHeaders = getStringRecord(file.entryHeaders);
+  const headers = mergeHeaderRecords(providerHeaders, entryHeaders);
+
+  if (!hasHeaderCaseInsensitive(headers, 'authorization')) {
+    if (!apiKey) {
+      throw new Error(t('vercel_quota.missing_api_key'));
+    }
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+
+  const result = await apiCallApi.request({
+    method: 'GET',
+    url: VERCEL_CREDITS_URL,
+    header: headers,
+  });
+
+  if (result.statusCode < 200 || result.statusCode >= 300) {
+    throw createStatusError(getApiCallErrorMessage(result), result.statusCode);
+  }
+
+  const parsed = parseVercelCreditsPayload(result.body);
+  if (!parsed) {
+    throw new Error(t('vercel_quota.empty_data'));
+  }
+
+  const totalBudget = parsed.balance + parsed.totalUsed;
+  const remainingPercent =
+    totalBudget > 0
+      ? Math.max(0, Math.min(100, (parsed.balance / totalBudget) * 100))
+      : parsed.balance > 0
+        ? 100
+        : 0;
+
+  return {
+    balance: parsed.balance,
+    totalUsed: parsed.totalUsed,
+    remainingPercent,
+  };
+};
+
+const renderVercelItems = (
+  quota: VercelQuotaState,
+  t: TFunction,
+  helpers: QuotaRenderHelpers
+): ReactNode => {
+  const { styles: styleMap, QuotaProgressBar } = helpers;
+  const { createElement: h, Fragment } = React;
+  const remainingPercent = quota.remainingPercent ?? null;
+  const balance = quota.balance ?? null;
+  const totalUsed = quota.totalUsed ?? null;
+  const statusKey =
+    balance !== null && balance > 0
+      ? 'vercel_quota.status_available'
+      : 'vercel_quota.status_exhausted';
+  const totalBudget = balance !== null && totalUsed !== null ? balance + totalUsed : null;
+
+  return h(
+    Fragment,
+    null,
+    h(
+      'div',
+      { className: styleMap.codexPlan },
+      h('span', { className: styleMap.codexPlanLabel }, t('vercel_quota.status_label')),
+      h('span', { className: styleMap.codexPlanValue }, t(statusKey))
+    ),
+    h(
+      'div',
+      { className: styleMap.quotaRow },
+      h(
+        'div',
+        { className: styleMap.quotaRowHeader },
+        h('span', { className: styleMap.quotaModel }, t('vercel_quota.credits_label')),
+        h(
+          'div',
+          { className: styleMap.quotaMeta },
+          h(
+            'span',
+            { className: styleMap.quotaPercent },
+            remainingPercent === null ? '--' : `${Math.round(remainingPercent)}%`
+          ),
+          h(
+            'span',
+            { className: styleMap.quotaAmount },
+            t('vercel_quota.balance_amount', { value: formatVercelCredits(balance) })
+          ),
+          totalBudget !== null
+            ? h(
+                'span',
+                { className: styleMap.quotaReset },
+                t('vercel_quota.total_amount', { value: formatVercelCredits(totalBudget) })
+              )
+            : null
+        )
+      ),
+      h(QuotaProgressBar, { percent: remainingPercent, highThreshold: 40, mediumThreshold: 40 }),
+      h(
+        'div',
+        { className: styleMap.codexPlan },
+        h('span', { className: styleMap.codexPlanLabel }, t('vercel_quota.used_label')),
+        h(
+          'span',
+          { className: styleMap.codexPlanValue },
+          t('vercel_quota.used_amount', { value: formatVercelCredits(totalUsed) })
+        )
+      )
+    )
+  );
+};
+
 const renderGeminiCliItems = (
   quota: GeminiCliQuotaState,
   t: TFunction,
@@ -954,6 +1134,41 @@ export const CODEX_CONFIG: QuotaConfig<
   controlClassName: styles.codexControl,
   gridClassName: styles.codexGrid,
   renderQuotaItems: renderCodexItems,
+};
+
+export const VERCEL_CONFIG: QuotaConfig<
+  VercelQuotaState,
+  { balance: number; totalUsed: number; remainingPercent: number }
+> = {
+  type: 'vercel',
+  i18nPrefix: 'vercel_quota',
+  cardIdleMessageKey: 'quota_management.card_idle_hint',
+  filterFn: (file) =>
+    (String(file.type ?? file.provider ?? '').trim().toLowerCase() === 'vercel') &&
+    !isDisabledAuthFile(file),
+  fetchQuota: fetchVercelQuota,
+  storeSelector: (state) => state.vercelQuota,
+  storeSetter: 'setVercelQuota',
+  buildLoadingState: () => ({ status: 'loading', balance: null, totalUsed: null, remainingPercent: null }),
+  buildSuccessState: (data) => ({
+    status: 'success',
+    balance: data.balance,
+    totalUsed: data.totalUsed,
+    remainingPercent: data.remainingPercent,
+  }),
+  buildErrorState: (message, status) => ({
+    status: 'error',
+    balance: null,
+    totalUsed: null,
+    remainingPercent: null,
+    error: message,
+    errorStatus: status,
+  }),
+  cardClassName: styles.vercelCard,
+  controlsClassName: styles.vercelControls,
+  controlClassName: styles.vercelControl,
+  gridClassName: styles.vercelGrid,
+  renderQuotaItems: renderVercelItems,
 };
 
 export const GEMINI_CLI_CONFIG: QuotaConfig<

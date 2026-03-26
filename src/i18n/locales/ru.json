@@ -653,8 +653,27 @@
     "plan_plus": "Plus",
     "plan_team": "Team",
     "plan_free": "Free",
-    "plan_pro": "Pro"
-  },
+      "plan_pro": "Pro"
+    },
+    "vercel_quota": {
+      "title": "Квота Vercel",
+      "empty_title": "Провайдеры Vercel отсутствуют",
+      "empty_desc": "Настройте OpenAI-совместимого провайдера с base URL https://ai-gateway.vercel.sh/v1, чтобы видеть квоту Vercel.",
+      "idle": "Нажмите, чтобы обновить квоту",
+      "loading": "Загрузка квоты...",
+      "load_failed": "Не удалось загрузить квоту: {{message}}",
+      "missing_api_key": "В записи провайдера Vercel отсутствует API key",
+      "empty_data": "Данные по квоте отсутствуют",
+      "status_label": "Статус",
+      "status_available": "Доступно",
+      "status_exhausted": "Баланс исчерпан",
+      "credits_label": "Credits",
+      "total_balance_label": "Общий баланс",
+      "balance_amount": "Баланс {{value}}",
+      "used_label": "Использовано",
+      "used_amount": "{{value}}",
+      "total_amount": "Всего {{value}}"
+    },
   "gemini_cli_quota": {
     "title": "Квота Gemini CLI",
     "empty_title": "Файлы авторизации Gemini CLI отсутствуют",
