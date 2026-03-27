@@ -37,6 +37,7 @@ interface ModelStat {
 
 interface ChannelStat {
   source: string;
+  authIndex: string;
   displayName: string;
   providerName: string | null;
   providerType: string;
@@ -50,28 +51,32 @@ interface ChannelStat {
   models: Record<string, ModelStat>;
 }
 
-export function ChannelStats({ data, loading, providerMap, providerModels, sourceInfoMap, authFileMap }: ChannelStatsProps) {
+export function ChannelStats({
+  data,
+  loading,
+  providerMap,
+  providerModels,
+  sourceInfoMap,
+  authFileMap,
+}: ChannelStatsProps) {
   const { t } = useTranslation();
   const [expandedChannel, setExpandedChannel] = useState<string | null>(null);
   const [filterChannel, setFilterChannel] = useState('');
   const [filterModel, setFilterModel] = useState('');
   const [filterStatus, setFilterStatus] = useState<'' | 'success' | 'failed'>('');
-
-  // 时间范围状态
   const [timeRange, setTimeRange] = useState<TimeRange>(7);
   const [customRange, setCustomRange] = useState<DateRange | undefined>();
 
-  // 使用禁用模型 Hook
   const {
     disableState,
     disabling,
-    isModelDisabled,
+    isCredentialDisabled,
+    canDisableCredential,
     handleDisableClick: onDisableClick,
     handleConfirmDisable,
     handleCancelDisable,
   } = useDisableModel({ providerMap, providerModels, sourceInfoMap });
 
-  // 处理时间范围变化
   const handleTimeRangeChange = useCallback((range: TimeRange, custom?: DateRange) => {
     setTimeRange(range);
     if (custom) {
@@ -79,12 +84,10 @@ export function ChannelStats({ data, loading, providerMap, providerModels, sourc
     }
   }, []);
 
-  // 根据时间范围过滤数据
   const timeFilteredData = useMemo(() => {
     return filterDataByTimeRange(data, timeRange, customRange);
   }, [data, timeRange, customRange]);
 
-  // 计算渠道统计数据
   const channelStats = useMemo(() => {
     if (!timeFilteredData?.apis) return [];
 
@@ -96,29 +99,34 @@ export function ChannelStats({ data, loading, providerMap, providerModels, sourc
       Object.entries(apiData.models).forEach(([modelName, modelData]) => {
         modelData.details.forEach((detail) => {
           const source = detail.source || 'unknown';
-          // 使用与请求事件明细相同的解析逻辑
+          const authIndex = detail.auth_index ? String(detail.auth_index) : '';
+
           let normalizedSource = normalizeCache.get(source);
           if (normalizedSource === undefined) {
             normalizedSource = normalizeUsageSourceId(source);
             normalizeCache.set(source, normalizedSource);
           }
-          const sourceInfo = resolveSourceDisplay(normalizedSource, detail.auth_index, sourceInfoMap, credMap);
+
+          const sourceInfo = resolveSourceDisplay(
+            normalizedSource,
+            detail.auth_index,
+            sourceInfoMap,
+            credMap
+          );
           const { provider, masked } = getProviderDisplayParts(source, providerMap);
-          // 优先用 sourceResolver 解析的名称，回退到 providerMap
-          const resolvedName = sourceInfo.displayName && sourceInfo.displayName !== normalizedSource
-            ? sourceInfo.displayName
-            : provider;
-          // 只统计能解析出名称的渠道
+          const resolvedName =
+            sourceInfo.displayName && sourceInfo.displayName !== normalizedSource
+              ? sourceInfo.displayName
+              : provider;
           if (!resolvedName) return;
 
-          const displayName = provider
-            ? `${provider} (${masked})`
-            : `${resolvedName} (${masked})`;
+          const displayName = provider ? `${provider} (${masked})` : `${resolvedName} (${masked})`;
           const timestamp = detail.timestamp ? new Date(detail.timestamp).getTime() : 0;
 
           if (!stats[displayName]) {
             stats[displayName] = {
               source,
+              authIndex,
               displayName,
               providerName: provider || resolvedName,
               providerType: sourceInfo.type || '',
@@ -133,24 +141,26 @@ export function ChannelStats({ data, loading, providerMap, providerModels, sourc
             };
           }
 
-          stats[displayName].totalRequests++;
+          if (!stats[displayName].authIndex && authIndex) {
+            stats[displayName].authIndex = authIndex;
+          }
+
+          const channelStat = stats[displayName];
+          channelStat.totalRequests += 1;
           if (detail.failed) {
-            stats[displayName].failedRequests++;
+            channelStat.failedRequests += 1;
           } else {
-            stats[displayName].successRequests++;
+            channelStat.successRequests += 1;
           }
 
-          // 更新最近请求时间
-          if (timestamp > stats[displayName].lastRequestTime) {
-            stats[displayName].lastRequestTime = timestamp;
+          if (timestamp > channelStat.lastRequestTime) {
+            channelStat.lastRequestTime = timestamp;
           }
 
-          // 收集请求状态
-          stats[displayName].recentRequests.push({ failed: detail.failed, timestamp });
+          channelStat.recentRequests.push({ failed: detail.failed, timestamp });
 
-          // 模型统计
-          if (!stats[displayName].models[modelName]) {
-            stats[displayName].models[modelName] = {
+          if (!channelStat.models[modelName]) {
+            channelStat.models[modelName] = {
               requests: 0,
               success: 0,
               failed: 0,
@@ -159,33 +169,30 @@ export function ChannelStats({ data, loading, providerMap, providerModels, sourc
               lastTimestamp: 0,
             };
           }
-          stats[displayName].models[modelName].requests++;
+
+          const modelStat = channelStat.models[modelName];
+          modelStat.requests += 1;
           if (detail.failed) {
-            stats[displayName].models[modelName].failed++;
+            modelStat.failed += 1;
           } else {
-            stats[displayName].models[modelName].success++;
+            modelStat.success += 1;
           }
-          stats[displayName].models[modelName].recentRequests.push({ failed: detail.failed, timestamp });
-          if (timestamp > stats[displayName].models[modelName].lastTimestamp) {
-            stats[displayName].models[modelName].lastTimestamp = timestamp;
+          modelStat.recentRequests.push({ failed: detail.failed, timestamp });
+          if (timestamp > modelStat.lastTimestamp) {
+            modelStat.lastTimestamp = timestamp;
           }
         });
       });
     });
 
-    // 计算成功率并排序请求
     Object.values(stats).forEach((stat) => {
-      stat.successRate = stat.totalRequests > 0
-        ? (stat.successRequests / stat.totalRequests) * 100
-        : 0;
-      // 按时间排序，取最近12个
+      stat.successRate =
+        stat.totalRequests > 0 ? (stat.successRequests / stat.totalRequests) * 100 : 0;
       stat.recentRequests.sort((a, b) => a.timestamp - b.timestamp);
       stat.recentRequests = stat.recentRequests.slice(-12);
 
       Object.values(stat.models).forEach((model) => {
-        model.successRate = model.requests > 0
-          ? (model.success / model.requests) * 100
-          : 0;
+        model.successRate = model.requests > 0 ? (model.success / model.requests) * 100 : 0;
         model.recentRequests.sort((a, b) => a.timestamp - b.timestamp);
         model.recentRequests = model.recentRequests.slice(-12);
       });
@@ -197,7 +204,6 @@ export function ChannelStats({ data, loading, providerMap, providerModels, sourc
       .slice(0, 10);
   }, [timeFilteredData, providerMap, sourceInfoMap, authFileMap]);
 
-  // 获取所有渠道和模型列表
   const { channels, models } = useMemo(() => {
     const channelSet = new Set<string>();
     const modelSet = new Set<string>();
@@ -213,7 +219,6 @@ export function ChannelStats({ data, loading, providerMap, providerModels, sourc
     };
   }, [channelStats]);
 
-  // 过滤后的数据
   const filteredStats = useMemo(() => {
     return channelStats.filter((stat) => {
       if (filterChannel && stat.displayName !== filterChannel) return false;
@@ -224,15 +229,18 @@ export function ChannelStats({ data, loading, providerMap, providerModels, sourc
     });
   }, [channelStats, filterChannel, filterModel, filterStatus]);
 
-  // 切换展开状态
   const toggleExpand = (displayName: string) => {
     setExpandedChannel(expandedChannel === displayName ? null : displayName);
   };
 
-  // 开始禁用流程（阻止事件冒泡）
-  const handleDisableClick = (source: string, model: string, e: React.MouseEvent) => {
+  const handleDisableClick = (
+    source: string,
+    authIndex: string,
+    displayName: string,
+    e: React.MouseEvent
+  ) => {
     e.stopPropagation();
-    onDisableClick(source, model);
+    onDisableClick({ source, authIndex, displayName });
   };
 
   return (
@@ -241,8 +249,8 @@ export function ChannelStats({ data, loading, providerMap, providerModels, sourc
         title={t('monitor.channel.title')}
         subtitle={
           <span>
-            {formatTimeRangeCaption(timeRange, customRange, t)} · {t('monitor.channel.subtitle')}
-            <span style={{ color: 'var(--text-tertiary)' }}> · {t('monitor.channel.click_hint')}</span>
+            {formatTimeRangeCaption(timeRange, customRange, t)} 路 {t('monitor.channel.subtitle')}
+            <span style={{ color: 'var(--text-tertiary)' }}> 路 {t('monitor.channel.click_hint')}</span>
           </span>
         }
         extra={
@@ -253,7 +261,6 @@ export function ChannelStats({ data, loading, providerMap, providerModels, sourc
           />
         }
       >
-        {/* 筛选器 */}
         <div className={styles.logFilters}>
           <select
             className={styles.logSelect}
@@ -286,7 +293,6 @@ export function ChannelStats({ data, loading, providerMap, providerModels, sourc
           </select>
         </div>
 
-        {/* 表格 */}
         <div className={styles.tableWrapper}>
           {loading ? (
             <div className={styles.emptyState}>{t('common.loading')}</div>
@@ -304,123 +310,137 @@ export function ChannelStats({ data, loading, providerMap, providerModels, sourc
                 </tr>
               </thead>
               <tbody>
-                {filteredStats.map((stat) => (
-                  <Fragment key={stat.displayName}>
-                    <tr
-                      className={styles.expandable}
-                      onClick={() => toggleExpand(stat.displayName)}
-                    >
-                      <td>
-                        {stat.providerName ? (
-                          <>
-                            <span className={styles.channelName}>{stat.providerName}</span>
-                            <span className={styles.channelSecret}> ({stat.maskedKey})</span>
-                          </>
-                        ) : (
-                          stat.maskedKey
-                        )}
-                      </td>
-                      <td>{stat.totalRequests.toLocaleString()}</td>
-                      <td className={getRateClassName(stat.successRate, styles)}>
-                        {stat.successRate.toFixed(1)}%
-                      </td>
-                      <td>
-                        <div className={styles.statusBars}>
-                          {stat.recentRequests.map((req, i) => (
-                            <div
-                              key={i}
-                              className={`${styles.statusBar} ${req.failed ? styles.failure : styles.success}`}
-                            />
-                          ))}
-                        </div>
-                      </td>
-                      <td>{formatTimestamp(stat.lastRequestTime)}</td>
-                    </tr>
-                    {expandedChannel === stat.displayName && (
-                      <tr key={`${stat.displayName}-detail`}>
-                        <td colSpan={5} className={styles.expandDetail}>
-                          <div className={styles.expandTableWrapper}>
-                          <table className={styles.table}>
-                            <thead>
-                              <tr>
-                                <th>{t('monitor.channel.model')}</th>
-                                <th>{t('monitor.channel.header_count')}</th>
-                                <th>{t('monitor.channel.header_rate')}</th>
-                                <th>{t('monitor.channel.success')}/{t('monitor.channel.failed')}</th>
-                                <th>{t('monitor.channel.header_recent')}</th>
-                                <th>{t('monitor.channel.header_time')}</th>
-                                <th>{t('monitor.logs.header_actions')}</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {Object.entries(stat.models)
-                                .sort((a, b) => {
-                                  const aDisabled = isModelDisabled(stat.source, a[0]);
-                                  const bDisabled = isModelDisabled(stat.source, b[0]);
-                                  // 已禁用的排在后面
-                                  if (aDisabled !== bDisabled) {
-                                    return aDisabled ? 1 : -1;
-                                  }
-                                  // 然后按请求数降序
-                                  return b[1].requests - a[1].requests;
-                                })
-                                .map(([modelName, modelStat]) => {
-                                  const disabled = isModelDisabled(stat.source, modelName);
-                                  return (
-                                    <tr key={modelName} className={disabled ? styles.modelDisabled : ''}>
-                                      <td>{modelName}</td>
-                                      <td>{modelStat.requests.toLocaleString()}</td>
-                                      <td className={getRateClassName(modelStat.successRate, styles)}>
-                                        {modelStat.successRate.toFixed(1)}%
-                                      </td>
-                                      <td>
-                                        <span className={styles.kpiSuccess}>{modelStat.success}</span>
-                                        {' / '}
-                                        <span className={styles.kpiFailure}>{modelStat.failed}</span>
-                                      </td>
-                                      <td>
-                                        <div className={styles.statusBars}>
-                                          {modelStat.recentRequests.map((req, i) => (
-                                            <div
-                                              key={i}
-                                              className={`${styles.statusBar} ${req.failed ? styles.failure : styles.success}`}
-                                            />
-                                          ))}
-                                        </div>
-                                      </td>
-                                      <td>{formatTimestamp(modelStat.lastTimestamp)}</td>
-                                      <td>
-                                        {stat.providerType.toLowerCase() === 'openai' ? (
-                                          disabled ? (
-                                            <span className={styles.disabledLabel}>{t('monitor.logs.removed')}</span>
-                                          ) : stat.source && stat.source !== '-' && stat.source !== 'unknown' ? (
-                                            <button
-                                              className={styles.disableBtn}
-                                              onClick={(e) => handleDisableClick(stat.source, modelName, e)}
-                                            >
-                                              {t('monitor.logs.disable')}
-                                            </button>
-                                          ) : '-'
-                                        ) : '-'}
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
-                            </tbody>
-                          </table>
+                {filteredStats.map((stat) => {
+                  const credentialDisabled = isCredentialDisabled({
+                    source: stat.source,
+                    authIndex: stat.authIndex,
+                    displayName: stat.displayName,
+                  });
+                  const canToggle = canDisableCredential({
+                    source: stat.source,
+                    authIndex: stat.authIndex,
+                    displayName: stat.displayName,
+                  });
+
+                  return (
+                    <Fragment key={stat.displayName}>
+                      <tr
+                        className={styles.expandable}
+                        onClick={() => toggleExpand(stat.displayName)}
+                      >
+                        <td>
+                          {stat.providerName ? (
+                            <>
+                              <span className={styles.channelName}>{stat.providerName}</span>
+                              <span className={styles.channelSecret}> ({stat.maskedKey})</span>
+                            </>
+                          ) : (
+                            stat.maskedKey
+                          )}
+                        </td>
+                        <td>{stat.totalRequests.toLocaleString()}</td>
+                        <td className={getRateClassName(stat.successRate, styles)}>
+                          {stat.successRate.toFixed(1)}%
+                        </td>
+                        <td>
+                          <div className={styles.statusBars}>
+                            {stat.recentRequests.map((req, i) => (
+                              <div
+                                key={i}
+                                className={`${styles.statusBar} ${req.failed ? styles.failure : styles.success}`}
+                              />
+                            ))}
                           </div>
                         </td>
+                        <td>{formatTimestamp(stat.lastRequestTime)}</td>
                       </tr>
-                    )}
-                  </Fragment>
-                ))}
+                      {expandedChannel === stat.displayName && (
+                        <tr key={`${stat.displayName}-detail`}>
+                          <td colSpan={5} className={styles.expandDetail}>
+                            <div className={styles.expandTableWrapper}>
+                              <table className={styles.table}>
+                                <thead>
+                                  <tr>
+                                    <th>{t('monitor.channel.model')}</th>
+                                    <th>{t('monitor.channel.header_count')}</th>
+                                    <th>{t('monitor.channel.header_rate')}</th>
+                                    <th>{t('monitor.channel.success')}/{t('monitor.channel.failed')}</th>
+                                    <th>{t('monitor.channel.header_recent')}</th>
+                                    <th>{t('monitor.channel.header_time')}</th>
+                                    <th>{t('monitor.logs.header_actions')}</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {Object.entries(stat.models)
+                                    .sort((a, b) => b[1].requests - a[1].requests)
+                                    .map(([modelName, modelStat]) => (
+                                      <tr
+                                        key={modelName}
+                                        className={credentialDisabled ? styles.modelDisabled : ''}
+                                      >
+                                        <td>{modelName}</td>
+                                        <td>{modelStat.requests.toLocaleString()}</td>
+                                        <td className={getRateClassName(modelStat.successRate, styles)}>
+                                          {modelStat.successRate.toFixed(1)}%
+                                        </td>
+                                        <td>
+                                          <span className={styles.kpiSuccess}>{modelStat.success}</span>
+                                          {' / '}
+                                          <span className={styles.kpiFailure}>{modelStat.failed}</span>
+                                        </td>
+                                        <td>
+                                          <div className={styles.statusBars}>
+                                            {modelStat.recentRequests.map((req, i) => (
+                                              <div
+                                                key={i}
+                                                className={`${styles.statusBar} ${req.failed ? styles.failure : styles.success}`}
+                                              />
+                                            ))}
+                                          </div>
+                                        </td>
+                                        <td>{formatTimestamp(modelStat.lastTimestamp)}</td>
+                                        <td>
+                                          {canToggle ? (
+                                            credentialDisabled ? (
+                                              <span className={styles.disabledLabel}>
+                                                {t('monitor.logs.disabled', { defaultValue: '已禁用' })}
+                                              </span>
+                                            ) : (
+                                              <button
+                                                className={`${styles.disableBtn} btn btn-secondary btn-sm`}
+                                                onClick={(e) =>
+                                                  handleDisableClick(
+                                                    stat.source,
+                                                    stat.authIndex,
+                                                    stat.displayName,
+                                                    e
+                                                  )
+                                                }
+                                              >
+                                                {t('monitor.logs.disable')}
+                                              </button>
+                                            )
+                                          ) : (
+                                            '-'
+                                          )}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           )}
         </div>
       </Card>
 
-      {/* 禁用确认弹窗 */}
       <DisableModelModal
         disableState={disableState}
         disabling={disabling}

@@ -13,7 +13,6 @@ import {
   fetchCodexQuotaData,
   getStatusFromError,
   isCodexFile,
-  isDisabledAuthFile,
   resolveCodexBulkFailureMessage,
 } from '@/utils/quota';
 
@@ -214,9 +213,7 @@ export const useCodexBulkQueryStore = create<CodexBulkQueryStoreState>((set, get
       const response = await authFilesApi.list();
       if (activeRunId !== runId) return;
 
-      const targets = (response?.files || []).filter(
-        (file) => isCodexFile(file) && !isDisabledAuthFile(file)
-      );
+      const targets = (response?.files || []).filter((file) => isCodexFile(file));
 
       set({ total: targets.length });
 

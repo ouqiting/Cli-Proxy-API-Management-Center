@@ -1,22 +1,29 @@
-/**
- * 禁用模型 Hook
- * 仅支持 OpenAI 兼容提供商：从 models 列表中移除模型映射
- */
-
-import { useState, useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { providersApi } from '@/services/api';
-import { useDisabledModelsStore } from '@/stores';
-import {
-  resolveProvider,
-  createDisableState,
-  type DisableState,
-} from '@/utils/monitor';
+import { useDisabledCredentialsStore, useNotificationStore } from '@/stores';
+import type {
+  CredentialDisableSnapshot,
+  DisableCredentialTarget,
+  ProviderKeyKind,
+} from '@/services/api/credentialDisable';
+import { buildCandidateUsageSourceIds, normalizeAuthIndex, normalizeUsageSourceId } from '@/utils/usage';
+import { maskApiKey } from '@/utils/format';
 import type { SourceInfo } from '@/types/sourceInfo';
-import type { OpenAIProviderConfig } from '@/types';
+
+export interface DisableCredentialLocator {
+  source: string;
+  authIndex?: string | number | null;
+  displayName?: string;
+}
+
+export interface DisableState {
+  target: DisableCredentialTarget;
+  displayName: string;
+  action: 'disable' | 'restore';
+}
 
 export interface UseDisableModelOptions {
-  providerMap: Record<string, string>;
+  providerMap?: Record<string, string>;
   sourceInfoMap?: Map<string, SourceInfo>;
   providerModels?: Record<string, Set<string>>;
 }
@@ -24,101 +31,265 @@ export interface UseDisableModelOptions {
 export interface UseDisableModelReturn {
   disableState: DisableState | null;
   disabling: boolean;
-  handleDisableClick: (source: string, model: string) => void;
+  handleDisableClick: (locator: DisableCredentialLocator) => void;
   handleConfirmDisable: () => Promise<void>;
   handleCancelDisable: () => void;
-  isModelDisabled: (source: string, model: string) => boolean;
+  isCredentialDisabled: (locator: DisableCredentialLocator) => boolean;
+  canDisableCredential: (locator: DisableCredentialLocator) => boolean;
 }
 
-export function useDisableModel(options: UseDisableModelOptions): UseDisableModelReturn {
-  const { providerMap, providerModels } = options;
-  const { t } = useTranslation();
+type IndexedTarget = {
+  target: DisableCredentialTarget;
+  displayName: string;
+};
 
-  const { addDisabledModel, isDisabled } = useDisabledModelsStore();
+type ResolutionIndexes = {
+  byAuthIndex: Map<string, IndexedTarget>;
+  bySourceId: Map<string, IndexedTarget[]>;
+};
+
+const buildProviderDisplayName = (
+  kind: ProviderKeyKind,
+  apiKey: string,
+  prefix?: string
+) => `${prefix?.trim() || kind} (${maskApiKey(apiKey)})`;
+
+const buildOpenAIDisplayName = (providerName: string, apiKey: string) =>
+  `${providerName} (${maskApiKey(apiKey)})`;
+
+const addSourceCandidates = (
+  map: Map<string, IndexedTarget[]>,
+  candidates: string[],
+  entry: IndexedTarget
+) => {
+  candidates.forEach((candidate) => {
+    if (!candidate) return;
+    const bucket = map.get(candidate);
+    if (bucket) {
+      bucket.push(entry);
+      return;
+    }
+    map.set(candidate, [entry]);
+  });
+};
+
+const buildResolutionIndexes = (snapshot: CredentialDisableSnapshot | null): ResolutionIndexes => {
+  const byAuthIndex = new Map<string, IndexedTarget>();
+  const bySourceId = new Map<string, IndexedTarget[]>();
+
+  if (!snapshot) {
+    return { byAuthIndex, bySourceId };
+  }
+
+  snapshot.authFiles.forEach((file) => {
+    const authIndex = normalizeAuthIndex(file['auth_index'] ?? file.authIndex);
+    if (!authIndex) return;
+    byAuthIndex.set(authIndex, {
+      target: {
+        kind: 'auth_file',
+        name: file.name,
+        authIndex,
+        displayName: file.name,
+        disabled: file.disabled === true,
+      },
+      displayName: file.name,
+    });
+  });
+
+  const providerKeyGroups: Array<{
+    kind: ProviderKeyKind;
+    items: Array<{ apiKey: string; prefix?: string; excludedModels?: string[] }>;
+  }> = [
+    { kind: 'gemini', items: snapshot.geminiKeys },
+    { kind: 'codex', items: snapshot.codexConfigs },
+    { kind: 'claude', items: snapshot.claudeConfigs },
+    { kind: 'vertex', items: snapshot.vertexConfigs },
+  ];
+
+  providerKeyGroups.forEach(({ kind, items }) => {
+    items.forEach((item) => {
+      const apiKey = String(item.apiKey ?? '').trim();
+      if (!apiKey) return;
+      const indexedTarget: IndexedTarget = {
+        target: {
+          kind: 'provider_key',
+          providerKind: kind,
+          apiKey,
+          prefix: item.prefix,
+          displayName: buildProviderDisplayName(kind, apiKey, item.prefix),
+          disabled:
+            Array.isArray(item.excludedModels) &&
+            item.excludedModels.some((model) => String(model ?? '').trim() === '*'),
+        },
+        displayName: buildProviderDisplayName(kind, apiKey, item.prefix),
+      };
+
+      addSourceCandidates(
+        bySourceId,
+        buildCandidateUsageSourceIds({ apiKey, prefix: item.prefix }),
+        indexedTarget
+      );
+    });
+  });
+
+  const openAIProviderCounts = new Map<string, number>();
+  const buildOpenAIProviderKey = (providerName: string, providerBaseUrl: string) =>
+    `${providerName.toLowerCase()}||${providerBaseUrl.toLowerCase()}`;
+
+  snapshot.openaiProviders.forEach((provider) => {
+    const providerKey = buildOpenAIProviderKey(provider.name, provider.baseUrl);
+    openAIProviderCounts.set(
+      providerKey,
+      (openAIProviderCounts.get(providerKey) ?? 0) + (provider.apiKeyEntries || []).length
+    );
+  });
+
+  snapshot.disabledOpenAIEntries.forEach((entry) => {
+    const providerKey = buildOpenAIProviderKey(entry.provider.name, entry.provider.baseUrl);
+    openAIProviderCounts.set(providerKey, (openAIProviderCounts.get(providerKey) ?? 0) + 1);
+  });
+
+  const addOpenAITarget = (
+    providerName: string,
+    providerBaseUrl: string,
+    providerPrefix: string | undefined,
+    apiKey: string,
+    disabled: boolean
+  ) => {
+    const providerKey = buildOpenAIProviderKey(providerName, providerBaseUrl);
+    const indexedTarget: IndexedTarget = {
+      target: {
+        kind: 'openai_api_key_entry',
+        providerName,
+        providerBaseUrl,
+        apiKey,
+        displayName: buildOpenAIDisplayName(providerName, apiKey),
+        disabled,
+      },
+      displayName: buildOpenAIDisplayName(providerName, apiKey),
+    };
+
+    addSourceCandidates(bySourceId, buildCandidateUsageSourceIds({ apiKey }), indexedTarget);
+
+    if ((openAIProviderCounts.get(providerKey) ?? 0) === 1 && providerPrefix?.trim()) {
+      addSourceCandidates(
+        bySourceId,
+        buildCandidateUsageSourceIds({ prefix: providerPrefix }),
+        indexedTarget
+      );
+    }
+  };
+
+  snapshot.openaiProviders.forEach((provider) => {
+    (provider.apiKeyEntries || []).forEach((entry) => {
+      const apiKey = String(entry.apiKey ?? '').trim();
+      if (!apiKey) return;
+      addOpenAITarget(provider.name, provider.baseUrl, provider.prefix, apiKey, false);
+    });
+  });
+
+  snapshot.disabledOpenAIEntries.forEach((entry) => {
+    const apiKey = String(entry.entry.apiKey ?? '').trim();
+    if (!apiKey) return;
+    addOpenAITarget(
+      entry.provider.name,
+      entry.provider.baseUrl,
+      entry.provider.prefix,
+      apiKey,
+      true
+    );
+  });
+
+  return { byAuthIndex, bySourceId };
+};
+
+export function useDisableModel(_options: UseDisableModelOptions): UseDisableModelReturn {
+  const { t } = useTranslation();
+  const showNotification = useNotificationStore((state) => state.showNotification);
+  const snapshot = useDisabledCredentialsStore((state) => state.snapshot);
+  const refreshSnapshot = useDisabledCredentialsStore((state) => state.refreshSnapshot);
+  const setTargetDisabledState = useDisabledCredentialsStore((state) => state.setTargetDisabledState);
 
   const [disableState, setDisableState] = useState<DisableState | null>(null);
   const [disabling, setDisabling] = useState(false);
 
-  const handleDisableClick = useCallback((source: string, model: string) => {
-    setDisableState(createDisableState(source, model, providerMap));
-  }, [providerMap]);
+  useEffect(() => {
+    void refreshSnapshot();
+  }, [refreshSnapshot]);
+
+  const indexes = useMemo(() => buildResolutionIndexes(snapshot), [snapshot]);
+
+  const resolveTarget = useCallback(
+    (locator: DisableCredentialLocator): IndexedTarget | null => {
+      const authIndex = normalizeAuthIndex(locator.authIndex);
+      if (authIndex) {
+        const byAuthIndex = indexes.byAuthIndex.get(authIndex);
+        if (byAuthIndex) return byAuthIndex;
+      }
+
+      const normalizedSource = normalizeUsageSourceId(locator.source);
+      if (!normalizedSource) return null;
+      const matches = indexes.bySourceId.get(normalizedSource) ?? [];
+      return matches.length === 1 ? matches[0] : null;
+    },
+    [indexes]
+  );
+
+  const canDisableCredential = useCallback(
+    (locator: DisableCredentialLocator) => resolveTarget(locator) !== null,
+    [resolveTarget]
+  );
+
+  const isCredentialDisabled = useCallback(
+    (locator: DisableCredentialLocator) => {
+      const resolved = resolveTarget(locator);
+      return resolved ? resolved.target.disabled : false;
+    },
+    [resolveTarget]
+  );
+
+  const handleDisableClick = useCallback(
+    (locator: DisableCredentialLocator) => {
+      const resolved = resolveTarget(locator);
+      if (!resolved) return;
+
+      setDisableState({
+        target: resolved.target,
+        displayName: locator.displayName || resolved.displayName,
+        action: resolved.target.disabled ? 'restore' : 'disable',
+      });
+    },
+    [resolveTarget]
+  );
 
   const handleConfirmDisable = useCallback(async () => {
     if (!disableState) return;
 
-    if (disableState.step < 3) {
-      setDisableState({
-        ...disableState,
-        step: disableState.step + 1,
-      });
-      return;
-    }
-
     setDisabling(true);
     try {
-      const { source, model } = disableState;
-
-      const providerName = resolveProvider(source, providerMap);
-      if (!providerName) {
-        throw new Error(t('monitor.logs.disable_error_no_provider'));
-      }
-
-      const providers = await providersApi.getOpenAIProviders();
-      const targetProvider = providers.find(
-        (p) => p.name && p.name.toLowerCase() === providerName.toLowerCase()
+      await setTargetDisabledState(
+        disableState.target,
+        disableState.action === 'disable'
       );
-
-      if (!targetProvider) {
-        throw new Error(t('monitor.logs.disable_error_provider_not_found', { provider: providerName }));
-      }
-
-      const originalModels = targetProvider.models || [];
-      const filteredModels = originalModels.filter(
-        (m) => m.alias !== model && m.name !== model
+      showNotification(
+        disableState.action === 'disable'
+          ? t('monitor.credential_disable_success', { defaultValue: '已禁用当前 key/凭证' })
+          : t('monitor.credential_restore_success', { defaultValue: '已恢复当前 key/凭证' }),
+        'success'
       );
-
-      if (filteredModels.length < originalModels.length) {
-        await providersApi.patchOpenAIProviderByName(targetProvider.name, {
-          models: filteredModels,
-        } as Partial<OpenAIProviderConfig>);
-      }
-
-      addDisabledModel(source, model);
       setDisableState(null);
-    } catch (err) {
-      console.error('禁用模型失败：', err);
-      alert(err instanceof Error ? err.message : t('monitor.logs.disable_error'));
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : t('monitor.logs.disable_error');
+      showNotification(message, 'error');
     } finally {
       setDisabling(false);
     }
-  }, [disableState, providerMap, t, addDisabledModel]);
+  }, [disableState, setTargetDisabledState, showNotification, t]);
 
   const handleCancelDisable = useCallback(() => {
     setDisableState(null);
   }, []);
-
-  const isModelDisabled = useCallback((source: string, model: string): boolean => {
-    if (isDisabled(source, model)) {
-      return true;
-    }
-
-    if (providerModels) {
-      if (!source || !model) return false;
-
-      if (providerModels[source]) {
-        return !providerModels[source].has(model);
-      }
-
-      const entries = Object.entries(providerModels);
-      for (const [key, modelSet] of entries) {
-        if (source.startsWith(key) || key.startsWith(source)) {
-          return !modelSet.has(model);
-        }
-      }
-    }
-
-    return false;
-  }, [isDisabled, providerModels]);
 
   return {
     disableState,
@@ -126,6 +297,7 @@ export function useDisableModel(options: UseDisableModelOptions): UseDisableMode
     handleDisableClick,
     handleConfirmDisable,
     handleCancelDisable,
-    isModelDisabled,
+    isCredentialDisabled,
+    canDisableCredential,
   };
 }

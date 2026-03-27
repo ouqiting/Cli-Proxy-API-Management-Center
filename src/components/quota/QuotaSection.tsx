@@ -98,6 +98,7 @@ interface QuotaSectionProps<TState extends QuotaStatusState, TData> {
   disabled: boolean;
   leadingHeaderActions?: ReactNode;
   extraHeaderActions?: ReactNode;
+  renderCardAction?: (item: AuthFileItem) => ReactNode;
 }
 
 export function QuotaSection<TState extends QuotaStatusState, TData>({
@@ -106,7 +107,8 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
   loading,
   disabled,
   leadingHeaderActions,
-  extraHeaderActions
+  extraHeaderActions,
+  renderCardAction
 }: QuotaSectionProps<TState, TData>) {
   const { t } = useTranslation();
   const resolvedTheme: ResolvedTheme = useThemeStore((state) => state.resolvedTheme);
@@ -282,6 +284,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
                 cardClassName={config.cardClassName}
                 defaultType={config.type}
                 renderQuotaItems={config.renderQuotaItems}
+                cardAction={renderCardAction?.(item)}
               />
             ))}
           </div>

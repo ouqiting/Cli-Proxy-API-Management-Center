@@ -65,6 +65,7 @@ interface QuotaCardProps<TState extends QuotaStatusState> {
   cardClassName: string;
   defaultType: string;
   renderQuotaItems: (quota: TState, t: TFunction, helpers: QuotaRenderHelpers) => ReactNode;
+  cardAction?: ReactNode;
 }
 
 export function QuotaCard<TState extends QuotaStatusState>({
@@ -75,7 +76,8 @@ export function QuotaCard<TState extends QuotaStatusState>({
   cardIdleMessageKey,
   cardClassName,
   defaultType,
-  renderQuotaItems
+  renderQuotaItems,
+  cardAction
 }: QuotaCardProps<TState>) {
   const { t } = useTranslation();
 
@@ -101,19 +103,25 @@ export function QuotaCard<TState extends QuotaStatusState>({
   };
 
   return (
-    <div className={`${styles.fileCard} ${cardClassName}`}>
+    <div className={`${styles.fileCard} ${cardClassName} ${item.disabled ? styles.fileCardDisabled : ''}`}>
       <div className={styles.cardHeader}>
-        <span
-          className={styles.typeBadge}
-          style={{
-            backgroundColor: typeColor.bg,
-            color: typeColor.text,
-            ...(typeColor.border ? { border: typeColor.border } : {})
-          }}
-        >
-          {getTypeLabel(displayType)}
-        </span>
-        <span className={styles.fileName}>{item.name}</span>
+        <div className={styles.cardHeaderMain}>
+          <span
+            className={styles.typeBadge}
+            style={{
+              backgroundColor: typeColor.bg,
+              color: typeColor.text,
+              ...(typeColor.border ? { border: typeColor.border } : {})
+            }}
+          >
+            {getTypeLabel(displayType)}
+          </span>
+          {item.disabled ? (
+            <span className={styles.disabledBadge}>{t('common.disabled', { defaultValue: 'Disabled' })}</span>
+          ) : null}
+          <span className={styles.fileName}>{item.name}</span>
+        </div>
+        {cardAction ? <div className={styles.cardAction}>{cardAction}</div> : null}
       </div>
 
       <div className={styles.quotaSection}>

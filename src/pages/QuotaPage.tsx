@@ -5,7 +5,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
-import { useAuthStore, useNotificationStore, useQuotaStore } from '@/stores';
+import {
+  useAuthStore,
+  useDisabledCredentialsStore,
+  useNotificationStore,
+  useQuotaStore
+} from '@/stores';
 import { useCodexBulkQueryStore } from '@/stores/useCodexBulkQueryStore';
 import { authFilesApi, configFileApi, providersApi } from '@/services/api';
 import {
@@ -20,6 +25,7 @@ import {
 } from '@/components/quota';
 import { Button } from '@/components/ui/Button';
 import type { AuthFileItem, OpenAIProviderConfig } from '@/types';
+import type { DisableCredentialTarget } from '@/services/api/credentialDisable';
 import { maskApiKey } from '@/utils/format';
 import styles from './QuotaPage.module.scss';
 
@@ -53,6 +59,7 @@ export function QuotaPage() {
   const [error, setError] = useState('');
   const [codexQueryModalOpen, setCodexQueryModalOpen] = useState(false);
   const [deletingFailedConfigs, setDeletingFailedConfigs] = useState(false);
+  const [credentialActionLoadingKey, setCredentialActionLoadingKey] = useState<string | null>(null);
 
   const disableControls = connectionStatus !== 'connected';
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
@@ -69,6 +76,13 @@ export function QuotaPage() {
   const stopCodexBulkQuery = useCodexBulkQueryStore((state) => state.stopQuery);
   const removeFailedCodexItems = useCodexBulkQueryStore((state) => state.removeFailedItems);
   const vercelQuota = useQuotaStore((state) => state.vercelQuota);
+  const disabledCredentialsSnapshot = useDisabledCredentialsStore((state) => state.snapshot);
+  const refreshDisabledCredentialsSnapshot = useDisabledCredentialsStore(
+    (state) => state.refreshSnapshot
+  );
+  const setCredentialDisabledState = useDisabledCredentialsStore(
+    (state) => state.setTargetDisabledState
+  );
 
   const vercelFiles = useMemo(() => {
     const items: AuthFileItem[] = [];
@@ -89,16 +103,42 @@ export function QuotaPage() {
           name: `${providerName} - Key #${entryIndex + 1} (${maskedKey})`,
           type: 'vercel',
           provider: 'vercel',
+          disabled: false,
           apiKey,
           providerName,
+          providerBaseUrl: provider.baseUrl,
           providerHeaders: provider.headers ?? {},
           entryHeaders: entry.headers ?? {},
         });
       });
     });
 
+    (disabledCredentialsSnapshot?.disabledOpenAIEntries || []).forEach((entry, entryIndex) => {
+      const normalizedBaseUrl = normalizeQuotaOpenAIBaseUrl(entry.provider.baseUrl);
+      if (normalizedBaseUrl !== VERCEL_GATEWAY_BASE_URL) {
+        return;
+      }
+
+      const apiKey = String(entry.entry.apiKey ?? '').trim();
+      if (!apiKey) return;
+
+      const providerName = String(entry.provider.name ?? '').trim() || `Vercel Disabled #${entryIndex + 1}`;
+      const maskedKey = maskApiKey(apiKey);
+      items.push({
+        name: `${providerName} - Key (${maskedKey})`,
+        type: 'vercel',
+        provider: 'vercel',
+        disabled: true,
+        apiKey,
+        providerName,
+        providerBaseUrl: entry.provider.baseUrl,
+        providerHeaders: entry.provider.headers ?? {},
+        entryHeaders: entry.entry.headers ?? {},
+      });
+    });
+
     return items;
-  }, [openAIProviders]);
+  }, [disabledCredentialsSnapshot?.disabledOpenAIEntries, openAIProviders]);
 
   const vercelTotalBalance = useMemo(() => {
     const values = Object.values(vercelQuota);
@@ -146,8 +186,13 @@ export function QuotaPage() {
   }, [t]);
 
   const handleHeaderRefresh = useCallback(async () => {
-    await Promise.all([loadConfig(), loadFiles(), loadOpenAIProviders()]);
-  }, [loadConfig, loadFiles, loadOpenAIProviders]);
+    await Promise.all([
+      loadConfig(),
+      loadFiles(),
+      loadOpenAIProviders(),
+      refreshDisabledCredentialsSnapshot(true),
+    ]);
+  }, [loadConfig, loadFiles, loadOpenAIProviders, refreshDisabledCredentialsSnapshot]);
 
   const handleDeleteFailedCodexConfigs = useCallback(() => {
     if (deletingFailedConfigs) return;
@@ -240,13 +285,109 @@ export function QuotaPage() {
     t,
   ]);
 
+  const getCredentialActionKey = useCallback((item: AuthFileItem) => {
+    if (String(item.type ?? item.provider ?? '').trim().toLowerCase() === 'vercel') {
+      return `openai:${String(item.providerName ?? '').trim()}:${String(item.apiKey ?? '').trim()}`;
+    }
+    return `auth-file:${item.name}`;
+  }, []);
+
+  const handleToggleQuotaCredential = useCallback(
+    async (item: AuthFileItem) => {
+      const providerType = String(item.type ?? item.provider ?? '').trim().toLowerCase();
+      const target: DisableCredentialTarget =
+        providerType === 'vercel'
+          ? {
+              kind: 'openai_api_key_entry',
+              providerName: String(item.providerName ?? '').trim(),
+              providerBaseUrl: String(item.providerBaseUrl ?? '').trim(),
+              apiKey: String(item.apiKey ?? '').trim(),
+              displayName: item.name,
+              disabled: item.disabled === true,
+            }
+          : {
+              kind: 'auth_file',
+              name: item.name,
+              authIndex: String(item['auth_index'] ?? item.authIndex ?? '').trim() || null,
+              displayName: item.name,
+              disabled: item.disabled === true,
+            };
+
+      const actionKey = getCredentialActionKey(item);
+      setCredentialActionLoadingKey(actionKey);
+
+      try {
+        await setCredentialDisabledState(target, !target.disabled);
+        if (target.kind === 'openai_api_key_entry') {
+          await Promise.all([
+            loadOpenAIProviders(),
+            refreshDisabledCredentialsSnapshot(true),
+          ]);
+        } else {
+          await Promise.all([
+            loadFiles(),
+            refreshDisabledCredentialsSnapshot(true),
+          ]);
+        }
+
+        showNotification(
+          target.disabled
+            ? t('monitor.credential_restore_success', {
+                defaultValue: '已恢复当前 key/凭证',
+              })
+            : t('monitor.credential_disable_success', {
+                defaultValue: '已禁用当前 key/凭证',
+              }),
+          'success'
+        );
+      } catch (err: unknown) {
+        const message =
+          err instanceof Error ? err.message : t('common.unknown_error');
+        showNotification(message, 'error');
+      } finally {
+        setCredentialActionLoadingKey(null);
+      }
+    },
+    [
+      getCredentialActionKey,
+      loadFiles,
+      loadOpenAIProviders,
+      refreshDisabledCredentialsSnapshot,
+      setCredentialDisabledState,
+      showNotification,
+      t,
+    ]
+  );
+
   useHeaderRefresh(handleHeaderRefresh);
 
   useEffect(() => {
     loadFiles();
     loadConfig();
     loadOpenAIProviders();
-  }, [loadFiles, loadConfig, loadOpenAIProviders]);
+    void refreshDisabledCredentialsSnapshot();
+  }, [loadFiles, loadConfig, loadOpenAIProviders, refreshDisabledCredentialsSnapshot]);
+
+  const renderQuotaCredentialAction = useCallback(
+    (item: AuthFileItem) => {
+      const actionKey = getCredentialActionKey(item);
+      const isLoading = credentialActionLoadingKey === actionKey;
+      return (
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => void handleToggleQuotaCredential(item)}
+          disabled={disableControls || isLoading}
+          loading={isLoading}
+        >
+          {item.disabled
+            ? t('monitor.credential_restore_button', { defaultValue: '恢复' })
+            : t('monitor.logs.disable', { defaultValue: '禁用' })}
+        </Button>
+      );
+    },
+    [credentialActionLoadingKey, disableControls, getCredentialActionKey, handleToggleQuotaCredential, t]
+  );
 
   return (
     <div className={styles.container}>
@@ -262,6 +403,7 @@ export function QuotaPage() {
         files={files}
         loading={loading}
         disabled={disableControls}
+        renderCardAction={renderQuotaCredentialAction}
         extraHeaderActions={
           <Button
             variant="secondary"
@@ -275,11 +417,12 @@ export function QuotaPage() {
       />
       {vercelFiles.length > 0 ? (
         <QuotaSection
-          config={VERCEL_CONFIG}
-          files={vercelFiles}
-          loading={openAIProvidersLoading}
-          disabled={disableControls}
-          leadingHeaderActions={
+        config={VERCEL_CONFIG}
+        files={vercelFiles}
+        loading={openAIProvidersLoading}
+        disabled={disableControls}
+        renderCardAction={renderQuotaCredentialAction}
+        leadingHeaderActions={
             vercelTotalBalance !== null ? (
               <div className={styles.headerSummaryText}>
                 {t('vercel_quota.total_balance_label', {
@@ -296,24 +439,28 @@ export function QuotaPage() {
         files={files}
         loading={loading}
         disabled={disableControls}
+        renderCardAction={renderQuotaCredentialAction}
       />
       <QuotaSection
         config={ANTIGRAVITY_CONFIG}
         files={files}
         loading={loading}
         disabled={disableControls}
+        renderCardAction={renderQuotaCredentialAction}
       />
       <QuotaSection
         config={GEMINI_CLI_CONFIG}
         files={files}
         loading={loading}
         disabled={disableControls}
+        renderCardAction={renderQuotaCredentialAction}
       />
       <QuotaSection
         config={KIMI_CONFIG}
         files={files}
         loading={loading}
         disabled={disableControls}
+        renderCardAction={renderQuotaCredentialAction}
       />
 
       <CodexBulkQueryModal

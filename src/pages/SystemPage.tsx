@@ -108,8 +108,9 @@ export function SystemPage() {
 
   const appVersion = __APP_VERSION__ || t('system_info.version_unknown');
   const apiVersion = auth.serverVersion || t('system_info.version_unknown');
-  const buildTime = auth.serverBuildDate
-    ? new Date(auth.serverBuildDate).toLocaleString(i18n.language)
+  const appBuildTime = __APP_BUILD_TIME__ || '';
+  const buildTime = appBuildTime
+    ? new Date(appBuildTime).toLocaleString(i18n.language)
     : t('system_info.version_unknown');
 
   const getIconForCategory = (categoryId: string): string | null => {

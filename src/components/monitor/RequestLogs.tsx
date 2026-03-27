@@ -106,7 +106,8 @@ export function RequestLogs({ data, loading: parentLoading, providerMap, provide
   const {
     disableState,
     disabling,
-    isModelDisabled,
+    isCredentialDisabled,
+    canDisableCredential,
     handleDisableClick,
     handleConfirmDisable,
     handleCancelDisable,
@@ -407,7 +408,13 @@ export function RequestLogs({ data, loading: parentLoading, providerMap, provide
   const renderRow = (entry: LogEntry) => {
     const stats = getStats(entry);
     const rateValue = parseFloat(stats.successRate);
-    const disabled = isModelDisabled(entry.source, entry.model);
+    const locator = {
+      source: entry.source,
+      authIndex: entry.authIndex,
+      displayName: entry.displayName,
+    };
+    const disabled = isCredentialDisabled(locator);
+    const canToggle = canDisableCredential(locator);
     // 将 authIndex 映射为文件名
     const authDisplayName = entry.authIndex || '-';
 
@@ -457,16 +464,16 @@ export function RequestLogs({ data, loading: parentLoading, providerMap, provide
         <td>{formatNumber(entry.totalTokens)}</td>
         <td>{formatTimestamp(entry.timestamp)}</td>
         <td>
-          {entry.providerType.toLowerCase() === 'openai' && entry.source && entry.source !== '-' && entry.source !== 'unknown' ? (
+          {canToggle ? (
             disabled ? (
               <span className={styles.disabledLabel}>
-                {t('monitor.logs.disabled')}
+                {t('monitor.logs.disabled', { defaultValue: '已禁用' })}
               </span>
             ) : (
               <button
-                className={styles.disableBtn}
-                title={t('monitor.logs.disable_model')}
-                onClick={() => handleDisableClick(entry.source, entry.model)}
+                className={`${styles.disableBtn} btn btn-secondary btn-sm`}
+                title={t('monitor.logs.disable', { defaultValue: '禁用' })}
+                onClick={() => handleDisableClick(locator)}
               >
                 {t('monitor.logs.disable')}
               </button>

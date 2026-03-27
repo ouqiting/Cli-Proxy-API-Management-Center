@@ -37,6 +37,7 @@ interface ModelFailureStat {
 
 interface FailureStat {
   source: string;
+  authIndex: string;
   displayName: string;
   providerName: string | null;
   providerType: string;
@@ -46,27 +47,31 @@ interface FailureStat {
   models: Record<string, ModelFailureStat>;
 }
 
-export function FailureAnalysis({ data, loading, providerMap, providerModels, sourceInfoMap, authFileMap }: FailureAnalysisProps) {
+export function FailureAnalysis({
+  data,
+  loading,
+  providerMap,
+  providerModels,
+  sourceInfoMap,
+  authFileMap,
+}: FailureAnalysisProps) {
   const { t } = useTranslation();
   const [expandedChannel, setExpandedChannel] = useState<string | null>(null);
   const [filterChannel, setFilterChannel] = useState('');
   const [filterModel, setFilterModel] = useState('');
-
-  // 时间范围状态
   const [timeRange, setTimeRange] = useState<TimeRange>(7);
   const [customRange, setCustomRange] = useState<DateRange | undefined>();
 
-  // 使用禁用模型 Hook
   const {
     disableState,
     disabling,
-    isModelDisabled,
+    isCredentialDisabled,
+    canDisableCredential,
     handleDisableClick: onDisableClick,
     handleConfirmDisable,
     handleCancelDisable,
   } = useDisableModel({ providerMap, providerModels, sourceInfoMap });
 
-  // 处理时间范围变化
   const handleTimeRangeChange = useCallback((range: TimeRange, custom?: DateRange) => {
     setTimeRange(range);
     if (custom) {
@@ -74,12 +79,10 @@ export function FailureAnalysis({ data, loading, providerMap, providerModels, so
     }
   }, []);
 
-  // 根据时间范围过滤数据
   const timeFilteredData = useMemo(() => {
     return filterDataByTimeRange(data, timeRange, customRange);
   }, [data, timeRange, customRange]);
 
-  // 计算失败统计数据
   const failureStats = useMemo(() => {
     if (!timeFilteredData?.apis) return [];
 
@@ -94,40 +97,48 @@ export function FailureAnalysis({ data, loading, providerMap, providerModels, so
       return result;
     };
 
-    // 首先收集有失败记录的渠道
     const failedSources = new Set<string>();
     Object.values(timeFilteredData.apis).forEach((apiData) => {
       Object.values(apiData.models).forEach((modelData) => {
         modelData.details.forEach((detail) => {
-          if (detail.failed) {
-            const source = detail.source || 'unknown';
-            const normalizedSource = getNormalized(source);
-            const sourceInfo = resolveSourceDisplay(normalizedSource, detail.auth_index, sourceInfoMap, credMap);
-            const { provider } = getProviderDisplayParts(source, providerMap);
-            if (provider || (sourceInfo.displayName && sourceInfo.displayName !== normalizedSource)) {
-              failedSources.add(source);
-            }
+          if (!detail.failed) return;
+          const source = detail.source || 'unknown';
+          const normalizedSource = getNormalized(source);
+          const sourceInfo = resolveSourceDisplay(
+            normalizedSource,
+            detail.auth_index,
+            sourceInfoMap,
+            credMap
+          );
+          const { provider } = getProviderDisplayParts(source, providerMap);
+          if (provider || (sourceInfo.displayName && sourceInfo.displayName !== normalizedSource)) {
+            failedSources.add(source);
           }
         });
       });
     });
 
-    // 统计这些渠道的所有请求
     const stats: Record<string, FailureStat> = {};
 
     Object.values(timeFilteredData.apis).forEach((apiData) => {
       Object.entries(apiData.models).forEach(([modelName, modelData]) => {
         modelData.details.forEach((detail) => {
           const source = detail.source || 'unknown';
-          // 只统计有失败记录的渠道
+          const authIndex = detail.auth_index ? String(detail.auth_index) : '';
           if (!failedSources.has(source)) return;
 
           const normalizedSource = getNormalized(source);
-          const sourceInfo = resolveSourceDisplay(normalizedSource, detail.auth_index, sourceInfoMap, credMap);
+          const sourceInfo = resolveSourceDisplay(
+            normalizedSource,
+            detail.auth_index,
+            sourceInfoMap,
+            credMap
+          );
           const { provider, masked } = getProviderDisplayParts(source, providerMap);
-          const resolvedName = sourceInfo.displayName && sourceInfo.displayName !== normalizedSource
-            ? sourceInfo.displayName
-            : provider;
+          const resolvedName =
+            sourceInfo.displayName && sourceInfo.displayName !== normalizedSource
+              ? sourceInfo.displayName
+              : provider;
           const displayName = provider
             ? `${provider} (${masked})`
             : resolvedName
@@ -138,6 +149,7 @@ export function FailureAnalysis({ data, loading, providerMap, providerModels, so
           if (!stats[displayName]) {
             stats[displayName] = {
               source,
+              authIndex,
               displayName,
               providerName: provider || resolvedName,
               providerType: sourceInfo.type || '',
@@ -148,14 +160,17 @@ export function FailureAnalysis({ data, loading, providerMap, providerModels, so
             };
           }
 
+          if (!stats[displayName].authIndex && authIndex) {
+            stats[displayName].authIndex = authIndex;
+          }
+
           if (detail.failed) {
-            stats[displayName].failedCount++;
+            stats[displayName].failedCount += 1;
             if (timestamp > stats[displayName].lastFailTime) {
               stats[displayName].lastFailTime = timestamp;
             }
           }
 
-          // 按模型统计
           if (!stats[displayName].models[modelName]) {
             stats[displayName].models[modelName] = {
               success: 0,
@@ -166,26 +181,25 @@ export function FailureAnalysis({ data, loading, providerMap, providerModels, so
               lastTimestamp: 0,
             };
           }
-          stats[displayName].models[modelName].total++;
+
+          const modelStat = stats[displayName].models[modelName];
+          modelStat.total += 1;
           if (detail.failed) {
-            stats[displayName].models[modelName].failure++;
+            modelStat.failure += 1;
           } else {
-            stats[displayName].models[modelName].success++;
+            modelStat.success += 1;
           }
-          stats[displayName].models[modelName].recentRequests.push({ failed: detail.failed, timestamp });
-          if (timestamp > stats[displayName].models[modelName].lastTimestamp) {
-            stats[displayName].models[modelName].lastTimestamp = timestamp;
+          modelStat.recentRequests.push({ failed: detail.failed, timestamp });
+          if (timestamp > modelStat.lastTimestamp) {
+            modelStat.lastTimestamp = timestamp;
           }
         });
       });
     });
 
-    // 计算成功率并排序请求
     Object.values(stats).forEach((stat) => {
       Object.values(stat.models).forEach((model) => {
-        model.successRate = model.total > 0
-          ? (model.success / model.total) * 100
-          : 0;
+        model.successRate = model.total > 0 ? (model.success / model.total) * 100 : 0;
         model.recentRequests.sort((a, b) => a.timestamp - b.timestamp);
         model.recentRequests = model.recentRequests.slice(-12);
       });
@@ -197,7 +211,6 @@ export function FailureAnalysis({ data, loading, providerMap, providerModels, so
       .slice(0, 10);
   }, [timeFilteredData, providerMap, sourceInfoMap, authFileMap]);
 
-  // 获取所有渠道和模型列表
   const { channels, models } = useMemo(() => {
     const channelSet = new Set<string>();
     const modelSet = new Set<string>();
@@ -213,7 +226,6 @@ export function FailureAnalysis({ data, loading, providerMap, providerModels, so
     };
   }, [failureStats]);
 
-  // 过滤后的数据
   const filteredStats = useMemo(() => {
     return failureStats.filter((stat) => {
       if (filterChannel && stat.displayName !== filterChannel) return false;
@@ -222,32 +234,24 @@ export function FailureAnalysis({ data, loading, providerMap, providerModels, so
     });
   }, [failureStats, filterChannel, filterModel]);
 
-  // 切换展开状态
   const toggleExpand = (displayName: string) => {
     setExpandedChannel(expandedChannel === displayName ? null : displayName);
   };
 
-  // 获取主要失败模型（前2个，已禁用的排在后面）
-  const getTopFailedModels = (source: string, modelsMap: Record<string, ModelFailureStat>) => {
-    return Object.entries(modelsMap)
+  const getTopFailedModels = (modelsMap: Record<string, ModelFailureStat>) =>
+    Object.entries(modelsMap)
       .filter(([, stat]) => stat.failure > 0)
-      .sort((a, b) => {
-        const aDisabled = isModelDisabled(source, a[0]);
-        const bDisabled = isModelDisabled(source, b[0]);
-        // 已禁用的排在后面
-        if (aDisabled !== bDisabled) {
-          return aDisabled ? 1 : -1;
-        }
-        // 然后按失败数降序
-        return b[1].failure - a[1].failure;
-      })
+      .sort((a, b) => b[1].failure - a[1].failure)
       .slice(0, 2);
-  };
 
-  // 开始禁用流程（阻止事件冒泡）
-  const handleDisableClick = (source: string, model: string, e: React.MouseEvent) => {
+  const handleDisableClick = (
+    source: string,
+    authIndex: string,
+    displayName: string,
+    e: React.MouseEvent
+  ) => {
     e.stopPropagation();
-    onDisableClick(source, model);
+    onDisableClick({ source, authIndex, displayName });
   };
 
   return (
@@ -256,8 +260,8 @@ export function FailureAnalysis({ data, loading, providerMap, providerModels, so
         title={t('monitor.failure.title')}
         subtitle={
           <span>
-            {formatTimeRangeCaption(timeRange, customRange, t)} · {t('monitor.failure.subtitle')}
-            <span style={{ color: 'var(--text-tertiary)' }}> · {t('monitor.failure.click_hint')}</span>
+            {formatTimeRangeCaption(timeRange, customRange, t)} 路 {t('monitor.failure.subtitle')}
+            <span style={{ color: 'var(--text-tertiary)' }}> 路 {t('monitor.failure.click_hint')}</span>
           </span>
         }
         extra={
@@ -268,7 +272,6 @@ export function FailureAnalysis({ data, loading, providerMap, providerModels, so
           />
         }
       >
-        {/* 筛选器 */}
         <div className={styles.logFilters}>
           <select
             className={styles.logSelect}
@@ -292,7 +295,6 @@ export function FailureAnalysis({ data, loading, providerMap, providerModels, so
           </select>
         </div>
 
-        {/* 表格 */}
         <div className={styles.tableWrapper}>
           {loading ? (
             <div className={styles.emptyState}>{t('common.loading')}</div>
@@ -310,8 +312,18 @@ export function FailureAnalysis({ data, loading, providerMap, providerModels, so
               </thead>
               <tbody>
                 {filteredStats.map((stat) => {
-                  const topModels = getTopFailedModels(stat.source, stat.models);
-                  const totalFailedModels = Object.values(stat.models).filter(m => m.failure > 0).length;
+                  const topModels = getTopFailedModels(stat.models);
+                  const totalFailedModels = Object.values(stat.models).filter((m) => m.failure > 0).length;
+                  const credentialDisabled = isCredentialDisabled({
+                    source: stat.source,
+                    authIndex: stat.authIndex,
+                    displayName: stat.displayName,
+                  });
+                  const canToggle = canDisableCredential({
+                    source: stat.source,
+                    authIndex: stat.authIndex,
+                    displayName: stat.displayName,
+                  });
 
                   return (
                     <Fragment key={stat.displayName}>
@@ -335,12 +347,13 @@ export function FailureAnalysis({ data, loading, providerMap, providerModels, so
                           {topModels.map(([model, modelStat]) => {
                             const percent = ((modelStat.failure / stat.failedCount) * 100).toFixed(0);
                             const shortModel = model.length > 16 ? model.slice(0, 13) + '...' : model;
-                            const disabled = isModelDisabled(stat.source, model);
                             return (
                               <span
                                 key={model}
-                                className={`${styles.failureModelTag} ${disabled ? styles.modelDisabled : ''}`}
-                                title={`${model}: ${modelStat.failure} (${percent}%)${disabled ? ` - ${t('monitor.logs.removed')}` : ''}`}
+                                className={`${styles.failureModelTag} ${credentialDisabled ? styles.modelDisabled : ''}`}
+                                title={`${model}: ${modelStat.failure} (${percent}%)${
+                                  credentialDisabled ? ` - ${t('monitor.logs.disabled', { defaultValue: '已禁用' })}` : ''
+                                }`}
                               >
                                 {shortModel}
                               </span>
@@ -357,35 +370,27 @@ export function FailureAnalysis({ data, loading, providerMap, providerModels, so
                         <tr key={`${stat.displayName}-detail`}>
                           <td colSpan={4} className={styles.expandDetail}>
                             <div className={styles.expandTableWrapper}>
-                            <table className={styles.table}>
-                              <thead>
-                                <tr>
-                                  <th>{t('monitor.channel.model')}</th>
-                                  <th>{t('monitor.channel.header_count')}</th>
-                                  <th>{t('monitor.channel.header_rate')}</th>
-                                  <th>{t('monitor.channel.success')}/{t('monitor.channel.failed')}</th>
-                                  <th>{t('monitor.channel.header_recent')}</th>
-                                  <th>{t('monitor.channel.header_time')}</th>
-                                  <th>{t('monitor.logs.header_actions')}</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {Object.entries(stat.models)
-                                  .filter(([, m]) => m.failure > 0)
-                                  .sort((a, b) => {
-                                    const aDisabled = isModelDisabled(stat.source, a[0]);
-                                    const bDisabled = isModelDisabled(stat.source, b[0]);
-                                    // 已禁用的排在后面
-                                    if (aDisabled !== bDisabled) {
-                                      return aDisabled ? 1 : -1;
-                                    }
-                                    // 然后按失败数降序
-                                    return b[1].failure - a[1].failure;
-                                  })
-                                  .map(([modelName, modelStat]) => {
-                                    const disabled = isModelDisabled(stat.source, modelName);
-                                    return (
-                                      <tr key={modelName} className={disabled ? styles.modelDisabled : ''}>
+                              <table className={styles.table}>
+                                <thead>
+                                  <tr>
+                                    <th>{t('monitor.channel.model')}</th>
+                                    <th>{t('monitor.channel.header_count')}</th>
+                                    <th>{t('monitor.channel.header_rate')}</th>
+                                    <th>{t('monitor.channel.success')}/{t('monitor.channel.failed')}</th>
+                                    <th>{t('monitor.channel.header_recent')}</th>
+                                    <th>{t('monitor.channel.header_time')}</th>
+                                    <th>{t('monitor.logs.header_actions')}</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {Object.entries(stat.models)
+                                    .filter(([, m]) => m.failure > 0)
+                                    .sort((a, b) => b[1].failure - a[1].failure)
+                                    .map(([modelName, modelStat]) => (
+                                      <tr
+                                        key={modelName}
+                                        className={credentialDisabled ? styles.modelDisabled : ''}
+                                      >
                                         <td>{modelName}</td>
                                         <td>{modelStat.total.toLocaleString()}</td>
                                         <td className={getRateClassName(modelStat.successRate, styles)}>
@@ -408,24 +413,34 @@ export function FailureAnalysis({ data, loading, providerMap, providerModels, so
                                         </td>
                                         <td>{formatTimestamp(modelStat.lastTimestamp)}</td>
                                         <td>
-                                          {stat.providerType.toLowerCase() === 'openai' ? (
-                                            disabled ? (
-                                              <span className={styles.disabledLabel}>{t('monitor.logs.removed')}</span>
-                                            ) : stat.source && stat.source !== '-' && stat.source !== 'unknown' ? (
+                                          {canToggle ? (
+                                            credentialDisabled ? (
+                                              <span className={styles.disabledLabel}>
+                                                {t('monitor.logs.disabled', { defaultValue: '已禁用' })}
+                                              </span>
+                                            ) : (
                                               <button
-                                                className={styles.disableBtn}
-                                                onClick={(e) => handleDisableClick(stat.source, modelName, e)}
+                                                className={`${styles.disableBtn} btn btn-secondary btn-sm`}
+                                                onClick={(e) =>
+                                                  handleDisableClick(
+                                                    stat.source,
+                                                    stat.authIndex,
+                                                    stat.displayName,
+                                                    e
+                                                  )
+                                                }
                                               >
                                                 {t('monitor.logs.disable')}
                                               </button>
-                                            ) : '-'
-                                          ) : '-'}
+                                            )
+                                          ) : (
+                                            '-'
+                                          )}
                                         </td>
                                       </tr>
-                                    );
-                                  })}
-                              </tbody>
-                            </table>
+                                    ))}
+                                </tbody>
+                              </table>
                             </div>
                           </td>
                         </tr>
@@ -439,7 +454,6 @@ export function FailureAnalysis({ data, loading, providerMap, providerModels, so
         </div>
       </Card>
 
-      {/* 禁用确认弹窗 */}
       <DisableModelModal
         disableState={disableState}
         disabling={disabling}
