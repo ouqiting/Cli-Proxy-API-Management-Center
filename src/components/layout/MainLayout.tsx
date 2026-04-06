@@ -36,6 +36,7 @@ import { triggerHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { LANGUAGE_LABEL_KEYS, LANGUAGE_ORDER } from '@/utils/constants';
 import { isSupportedLanguage } from '@/utils/language';
 import { useAutoBackup } from '@/features/webdavBackup/hooks/useAutoBackup';
+import { useWebdavStore } from '@/features/webdavBackup/store/useWebdavStore';
 import type { Theme } from '@/types';
 
 const sidebarIcons: Record<string, ReactNode> = {
@@ -230,12 +231,13 @@ export function MainLayout() {
   const { showNotification } = useNotificationStore();
   const location = useLocation();
 
-  // 全局自动备份：只要管理中心打开即生效，无需停留在备份页面
-  useAutoBackup();
-
   const apiBase = useAuthStore((state) => state.apiBase);
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const logout = useAuthStore((state) => state.logout);
+  const hydrateWebdavSettings = useWebdavStore((state) => state.hydrateFromConfig);
+
+  // 全局自动备份：只要管理中心打开即生效，无需停留在备份页面
+  useAutoBackup();
 
   const config = useConfigStore((state) => state.config);
   const fetchConfig = useConfigStore((state) => state.fetchConfig);
@@ -434,6 +436,13 @@ export function MainLayout() {
       // ignore initial failure; login flow会提示
     });
   }, [fetchConfig]);
+
+  useEffect(() => {
+    if (connectionStatus !== 'connected' || !apiBase) return;
+    hydrateWebdavSettings(true).catch(() => {
+      // keep UI usable with defaults if config.yaml bootstrap fails
+    });
+  }, [apiBase, connectionStatus, hydrateWebdavSettings]);
 
   const statusClass =
     connectionStatus === 'connected'

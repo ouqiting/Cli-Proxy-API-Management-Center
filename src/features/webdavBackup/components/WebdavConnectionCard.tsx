@@ -14,8 +14,10 @@ export function WebdavConnectionCard() {
 
   const connection = useWebdavStore((s) => s.connection);
   const connectionStatus = useWebdavStore((s) => s.connectionStatus);
+  const isHydrating = useWebdavStore((s) => s.isHydrating);
   const setConnection = useWebdavStore((s) => s.setConnection);
   const setConnectionStatus = useWebdavStore((s) => s.setConnectionStatus);
+  const persistCurrentSettings = useWebdavStore((s) => s.persistCurrentSettings);
 
   const [localConfig, setLocalConfig] = useState(connection);
   const [testing, setTesting] = useState(false);
@@ -53,16 +55,22 @@ export function WebdavConnectionCard() {
     }
   }, [localConfig, setConnectionStatus, showNotification, t]);
 
-  const handleSave = useCallback(() => {
+  const handleSave = useCallback(async () => {
     const normalized = {
       ...localConfig,
       serverUrl: normalizeServerUrl(localConfig.serverUrl),
       basePath: normalizeDavPath(localConfig.basePath),
     };
-    setConnection(normalized);
-    setLocalConfig(normalized);
-    showNotification(t('backup.config_saved'), 'success');
-  }, [localConfig, setConnection, showNotification, t]);
+    try {
+      setConnection(normalized, { persist: false });
+      setLocalConfig(normalized);
+      await persistCurrentSettings();
+      showNotification(t('backup.config_saved'), 'success');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showNotification(`${t('notification.save_failed')}: ${msg}`, 'error');
+    }
+  }, [localConfig, persistCurrentSettings, setConnection, showNotification, t]);
 
   const statusBadge =
     connectionStatus === 'connected'
@@ -99,30 +107,34 @@ export function WebdavConnectionCard() {
             placeholder="https://dav.example.com"
             value={localConfig.serverUrl}
             onChange={(e) => handleChange('serverUrl', e.target.value)}
+            disabled={isHydrating}
           />
           <Input
             label={t('backup.base_path')}
             placeholder="/cpamc-backups/"
             value={localConfig.basePath}
             onChange={(e) => handleChange('basePath', e.target.value)}
+            disabled={isHydrating}
           />
           <Input
             label={t('backup.username')}
             value={localConfig.username}
             onChange={(e) => handleChange('username', e.target.value)}
+            disabled={isHydrating}
           />
           <Input
             label={t('backup.password')}
             type="password"
             value={localConfig.password}
             onChange={(e) => handleChange('password', e.target.value)}
+            disabled={isHydrating}
           />
         </div>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-          <Button variant="secondary" onClick={handleTest} loading={testing}>
+          <Button variant="secondary" onClick={handleTest} loading={testing} disabled={isHydrating}>
             {t('backup.test_connection')}
           </Button>
-          <Button variant="primary" onClick={handleSave}>
+          <Button variant="primary" onClick={handleSave} disabled={isHydrating}>
             {t('backup.save_config')}
           </Button>
         </div>

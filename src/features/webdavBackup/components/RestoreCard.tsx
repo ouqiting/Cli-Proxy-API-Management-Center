@@ -19,6 +19,7 @@ export function RestoreCard() {
 
   const isRestoring = useWebdavStore((s) => s.isRestoring);
   const isLoadingHistory = useWebdavStore((s) => s.isLoadingHistory);
+  const isHydrating = useWebdavStore((s) => s.isHydrating);
   const serverUrl = useWebdavStore((s) => s.connection.serverUrl);
   const lastBackupTime = useWebdavStore((s) => s.lastBackupTime);
 
@@ -84,7 +85,7 @@ export function RestoreCard() {
         title={t('backup.restore_card_title')}
         subtitle={t('backup.restore_card_subtitle')}
         extra={
-          <Button variant="ghost" size="sm" onClick={refresh} disabled={!serverUrl}>
+          <Button variant="ghost" size="sm" onClick={refresh} disabled={isHydrating || !serverUrl}>
             {t('common.refresh')}
           </Button>
         }
@@ -113,7 +114,7 @@ export function RestoreCard() {
             <Button
               variant="secondary"
               onClick={() => fileInputRef.current?.click()}
-              disabled={isRestoring}
+              disabled={isHydrating || isRestoring}
               loading={isRestoring && restoreFile !== null}
             >
               {t('backup.restore_local_btn')}
@@ -121,7 +122,11 @@ export function RestoreCard() {
           </div>
 
           {/* 备份历史列表 */}
-          {!serverUrl ? (
+          {isHydrating ? (
+            <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}>
+              <LoadingSpinner />
+            </div>
+          ) : !serverUrl ? (
             <div style={{ fontSize: 12, opacity: 0.5, textAlign: 'center', padding: 16 }}>
               {t('backup.restore_no_connection')}
             </div>

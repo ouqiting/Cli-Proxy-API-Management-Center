@@ -1,120 +1,179 @@
 import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
-import { secureStorage } from '@/services/storage/secureStorage';
 import type {
   WebdavConnectionConfig,
   ConnectionStatus,
   BackupScope,
   AutoBackupInterval,
 } from '../types';
-import { WEBDAV_STORE_KEY, DEFAULT_BASE_PATH, DEFAULT_MAX_BACKUP_COUNT, AUTO_BACKUP_INTERVALS } from '../constants';
+import {
+  clearLegacyWebdavSettings,
+  DEFAULT_PERSISTED_WEBDAV_SETTINGS,
+  loadWebdavSettingsFromConfig,
+  readLegacyWebdavSettings,
+  saveWebdavSettingsToConfig,
+  type PersistedWebdavSettings,
+} from '../configPersistence';
 
-interface WebdavStoreState {
-  // 持久化字段
-  connection: WebdavConnectionConfig;
-  backupScope: BackupScope;
-  autoBackupEnabled: boolean;
-  autoBackupInterval: AutoBackupInterval;
-  maxBackupCount: number;
-  lastBackupTime: string | null;
+interface PersistOptions {
+  persist?: boolean;
+}
 
+interface WebdavStoreState extends PersistedWebdavSettings {
   // 运行时字段
   connectionStatus: ConnectionStatus;
   isBackingUp: boolean;
   isRestoring: boolean;
   isLoadingHistory: boolean;
+  isHydrating: boolean;
+  hasHydrated: boolean;
+  persistError: string | null;
 
   // 操作
-  setConnection: (config: Partial<WebdavConnectionConfig>) => void;
-  setBackupScope: (scope: Partial<BackupScope>) => void;
-  setAutoBackupEnabled: (enabled: boolean) => void;
-  setAutoBackupInterval: (interval: AutoBackupInterval) => void;
-  setMaxBackupCount: (count: number) => void;
-  setLastBackupTime: (time: string | null) => void;
+  hydrateFromConfig: (force?: boolean) => Promise<void>;
+  persistCurrentSettings: () => Promise<void>;
+  setConnection: (config: Partial<WebdavConnectionConfig>, options?: PersistOptions) => void;
+  setBackupScope: (scope: Partial<BackupScope>, options?: PersistOptions) => void;
+  setAutoBackupEnabled: (enabled: boolean, options?: PersistOptions) => void;
+  setAutoBackupInterval: (interval: AutoBackupInterval, options?: PersistOptions) => void;
+  setMaxBackupCount: (count: number, options?: PersistOptions) => void;
+  setLastBackupTime: (time: string | null, options?: PersistOptions) => void;
   setConnectionStatus: (status: ConnectionStatus) => void;
   setIsBackingUp: (val: boolean) => void;
   setIsRestoring: (val: boolean) => void;
   setIsLoadingHistory: (val: boolean) => void;
 }
 
-export const useWebdavStore = create<WebdavStoreState>()(
-  persist(
-    (set) => ({
-      connection: {
-        serverUrl: '',
-        username: '',
-        password: '',
-        basePath: DEFAULT_BASE_PATH,
-      },
-      backupScope: {
-        localStorage: true,
-        config: false,
-        usage: true,
-      },
-      autoBackupEnabled: false,
-      autoBackupInterval: '24h',
-      maxBackupCount: DEFAULT_MAX_BACKUP_COUNT,
-      lastBackupTime: null,
+function extractPersistedState(state: WebdavStoreState): PersistedWebdavSettings {
+  return {
+    connection: state.connection,
+    backupScope: state.backupScope,
+    autoBackupEnabled: state.autoBackupEnabled,
+    autoBackupInterval: state.autoBackupInterval,
+    maxBackupCount: state.maxBackupCount,
+    lastBackupTime: state.lastBackupTime,
+  };
+}
 
-      connectionStatus: 'idle',
-      isBackingUp: false,
-      isRestoring: false,
-      isLoadingHistory: false,
+let persistQueue: Promise<void> = Promise.resolve();
+let hydrateQueue: Promise<void> | null = null;
 
-      setConnection: (config) =>
-        set((state) => ({
-          connection: { ...state.connection, ...config },
-        })),
-      setBackupScope: (scope) =>
-        set((state) => ({
-          backupScope: { ...state.backupScope, ...scope },
-        })),
-      setAutoBackupEnabled: (enabled) => set({ autoBackupEnabled: enabled }),
-      setAutoBackupInterval: (interval) => set({ autoBackupInterval: interval }),
-      setMaxBackupCount: (count) => set({ maxBackupCount: count }),
-      setLastBackupTime: (time) => set({ lastBackupTime: time }),
-      setConnectionStatus: (status) => set({ connectionStatus: status }),
-      setIsBackingUp: (val) => set({ isBackingUp: val }),
-      setIsRestoring: (val) => set({ isRestoring: val }),
-      setIsLoadingHistory: (val) => set({ isLoadingHistory: val }),
-    }),
-    {
-      name: WEBDAV_STORE_KEY,
-      storage: createJSONStorage(() => ({
-        getItem: (name) => {
-          const data = secureStorage.getItem<WebdavStoreState>(name);
-          return data ? JSON.stringify(data) : null;
-        },
-        setItem: (name, value) => {
-          secureStorage.setItem(name, JSON.parse(value));
-        },
-        removeItem: (name) => {
-          secureStorage.removeItem(name);
-        },
-      })),
-      version: 1,
-      migrate: (persisted: unknown) => {
-        const state = persisted as Record<string, unknown>;
-        // 旧版间隔值迁移：always→5m, 12h→24h, 7d→3d
-        const interval = state?.autoBackupInterval as string | undefined;
-        if (interval && !AUTO_BACKUP_INTERVALS.some((i) => i.value === interval)) {
-          const migration: Record<string, AutoBackupInterval> = {
-            always: '5m',
-            '12h': '24h',
-            '7d': '3d',
-          };
-          state.autoBackupInterval = migration[interval] ?? '24h';
+export const useWebdavStore = create<WebdavStoreState>((set, get) => {
+  const queuePersist = (options?: PersistOptions) => {
+    if (options?.persist === false) return;
+    if (!get().hasHydrated || get().isHydrating) return;
+    void get().persistCurrentSettings();
+  };
+
+  return {
+    ...DEFAULT_PERSISTED_WEBDAV_SETTINGS,
+
+    connectionStatus: 'idle',
+    isBackingUp: false,
+    isRestoring: false,
+    isLoadingHistory: false,
+    isHydrating: false,
+    hasHydrated: false,
+    persistError: null,
+
+    hydrateFromConfig: async (force = false) => {
+      if (!force) {
+        if (get().hasHydrated) return;
+        if (hydrateQueue) return hydrateQueue;
+      }
+
+      set({ isHydrating: true, persistError: null });
+
+      hydrateQueue = (async () => {
+        try {
+          const { settings, exists } = await loadWebdavSettingsFromConfig();
+          const legacySettings = exists ? null : readLegacyWebdavSettings();
+          const nextSettings = legacySettings ?? settings;
+
+          set({
+            ...nextSettings,
+            isHydrating: false,
+            hasHydrated: true,
+            persistError: null,
+          });
+
+          if (legacySettings) {
+            await saveWebdavSettingsToConfig(nextSettings);
+            clearLegacyWebdavSettings();
+          }
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : 'Failed to load WebDAV settings';
+          console.warn('[WebDAV Backup] Failed to hydrate settings from config.yaml:', error);
+          set({
+            ...DEFAULT_PERSISTED_WEBDAV_SETTINGS,
+            isHydrating: false,
+            hasHydrated: true,
+            persistError: message,
+          });
+        } finally {
+          hydrateQueue = null;
         }
-        return state;
-      },
-      partialize: (state) => ({
-        connection: state.connection,
-        backupScope: state.backupScope,
-        autoBackupEnabled: state.autoBackupEnabled,
-        autoBackupInterval: state.autoBackupInterval,
-        maxBackupCount: state.maxBackupCount,
-        lastBackupTime: state.lastBackupTime,
-      }),
-    }
-  )
-);
+      })();
+
+      return hydrateQueue;
+    },
+
+    persistCurrentSettings: async () => {
+      const snapshot = extractPersistedState(get());
+      persistQueue = persistQueue
+        .catch(() => undefined)
+        .then(async () => {
+          await saveWebdavSettingsToConfig(snapshot);
+          set({ persistError: null });
+        })
+        .catch((error) => {
+          const message =
+            error instanceof Error ? error.message : 'Failed to persist WebDAV settings';
+          console.warn('[WebDAV Backup] Failed to persist settings to config.yaml:', error);
+          set({ persistError: message });
+          throw error;
+        });
+
+      return persistQueue;
+    },
+
+    setConnection: (config, options) => {
+      set((state) => ({
+        connection: { ...state.connection, ...config },
+      }));
+      queuePersist(options);
+    },
+
+    setBackupScope: (scope, options) => {
+      set((state) => ({
+        backupScope: { ...state.backupScope, ...scope },
+      }));
+      queuePersist(options);
+    },
+
+    setAutoBackupEnabled: (enabled, options) => {
+      set({ autoBackupEnabled: enabled });
+      queuePersist(options);
+    },
+
+    setAutoBackupInterval: (interval, options) => {
+      set({ autoBackupInterval: interval });
+      queuePersist(options);
+    },
+
+    setMaxBackupCount: (count, options) => {
+      set({ maxBackupCount: Math.max(0, Math.trunc(count)) });
+      queuePersist(options);
+    },
+
+    setLastBackupTime: (time, options) => {
+      set({ lastBackupTime: time });
+      queuePersist(options);
+    },
+
+    setConnectionStatus: (status) => set({ connectionStatus: status }),
+    setIsBackingUp: (val) => set({ isBackingUp: val }),
+    setIsRestoring: (val) => set({ isRestoring: val }),
+    setIsLoadingHistory: (val) => set({ isLoadingHistory: val }),
+  };
+});

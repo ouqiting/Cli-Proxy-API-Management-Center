@@ -19,6 +19,7 @@ export function ManualBackupCard() {
   const backupScope = useWebdavStore((s) => s.backupScope);
   const setBackupScope = useWebdavStore((s) => s.setBackupScope);
   const isBackingUp = useWebdavStore((s) => s.isBackingUp);
+  const isHydrating = useWebdavStore((s) => s.isHydrating);
   const serverUrl = useWebdavStore((s) => s.connection.serverUrl);
 
   const autoBackupEnabled = useWebdavStore((s) => s.autoBackupEnabled);
@@ -51,6 +52,7 @@ export function ManualBackupCard() {
               <ToggleSwitch
                 label={t(`backup.scope_${key}`)}
                 checked={backupScope[key]}
+                disabled={isHydrating}
                 onChange={(val) => {
                   if (key === 'config' && val) {
                     showConfirmation({
@@ -79,7 +81,7 @@ export function ManualBackupCard() {
             label={t('backup.auto_enable')}
             checked={autoBackupEnabled}
             onChange={setAutoBackupEnabled}
-            disabled={!serverUrl}
+            disabled={isHydrating || !serverUrl}
           />
         </div>
 
@@ -106,6 +108,7 @@ export function ManualBackupCard() {
                 value={autoBackupInterval}
                 options={[...intervalOptions]}
                 onChange={(val) => setAutoBackupInterval(val as AutoBackupInterval)}
+                disabled={isHydrating}
               />
             </div>
           </div>
@@ -116,6 +119,7 @@ export function ManualBackupCard() {
                 value={String(maxBackupCount)}
                 options={maxCountOptions}
                 onChange={(val) => setMaxBackupCount(Number(val))}
+                disabled={isHydrating}
               />
             </div>
           </div>
@@ -145,14 +149,14 @@ export function ManualBackupCard() {
 
         {/* 操作按钮 */}
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-          <Button variant="secondary" onClick={exportLocal}>
+          <Button variant="secondary" onClick={exportLocal} disabled={isHydrating}>
             {t('backup.export_local')}
           </Button>
           <Button
             variant="primary"
             onClick={backup}
             loading={isBackingUp}
-            disabled={!serverUrl}
+            disabled={isHydrating || !serverUrl}
           >
             {t('backup.backup_now')}
           </Button>

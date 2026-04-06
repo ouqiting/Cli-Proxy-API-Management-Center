@@ -10,6 +10,7 @@ export function useAutoBackup() {
   const autoBackupEnabled = useWebdavStore((s) => s.autoBackupEnabled);
   const autoBackupInterval = useWebdavStore((s) => s.autoBackupInterval);
   const serverUrl = useWebdavStore((s) => s.connection.serverUrl);
+  const hasHydrated = useWebdavStore((s) => s.hasHydrated);
 
   useEffect(() => {
     if (timerRef.current) {
@@ -17,7 +18,7 @@ export function useAutoBackup() {
       timerRef.current = null;
     }
 
-    if (!autoBackupEnabled || !serverUrl) return;
+    if (!hasHydrated || !autoBackupEnabled || !serverUrl) return;
 
     const intervalConfig = AUTO_BACKUP_INTERVALS.find((i) => i.value === autoBackupInterval);
     if (!intervalConfig) return;
@@ -42,5 +43,5 @@ export function useAutoBackup() {
         timerRef.current = null;
       }
     };
-  }, [autoBackupEnabled, autoBackupInterval, serverUrl, backup]);
+  }, [autoBackupEnabled, autoBackupInterval, hasHydrated, serverUrl, backup]);
 }
