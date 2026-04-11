@@ -99,6 +99,7 @@ interface QuotaSectionProps<TState extends QuotaStatusState, TData> {
   leadingHeaderActions?: ReactNode;
   extraHeaderActions?: ReactNode;
   renderCardAction?: (item: AuthFileItem) => ReactNode;
+  sortItems?: (items: AuthFileItem[]) => AuthFileItem[];
 }
 
 export function QuotaSection<TState extends QuotaStatusState, TData>({
@@ -108,7 +109,8 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
   disabled,
   leadingHeaderActions,
   extraHeaderActions,
-  renderCardAction
+  renderCardAction,
+  sortItems
 }: QuotaSectionProps<TState, TData>) {
   const { t } = useTranslation();
   const resolvedTheme: ResolvedTheme = useThemeStore((state) => state.resolvedTheme);
@@ -121,10 +123,10 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
   const [viewMode, setViewMode] = useState<ViewMode>('paged');
   const [showTooManyWarning, setShowTooManyWarning] = useState(false);
 
-  const filteredFiles = useMemo(() => files.filter((file) => config.filterFn(file)), [
-    files,
-    config
-  ]);
+  const filteredFiles = useMemo(() => {
+    const matched = files.filter((file) => config.filterFn(file));
+    return sortItems ? sortItems(matched) : matched;
+  }, [files, config, sortItems]);
   const showAllAllowed = filteredFiles.length <= MAX_SHOW_ALL_THRESHOLD;
   const effectiveViewMode: ViewMode = viewMode === 'all' && !showAllAllowed ? 'paged' : viewMode;
 
@@ -205,6 +207,22 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
           nextState[file.name] = cached;
         }
       });
+
+      const prevKeys = Object.keys(prev);
+      const nextKeys = Object.keys(nextState);
+      if (prevKeys.length === nextKeys.length) {
+        let unchanged = true;
+        for (const key of nextKeys) {
+          if (prev[key] !== nextState[key]) {
+            unchanged = false;
+            break;
+          }
+        }
+        if (unchanged) {
+          return prev;
+        }
+      }
+
       return nextState;
     });
   }, [filteredFiles, loading, setQuota]);

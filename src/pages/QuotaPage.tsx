@@ -24,7 +24,7 @@ import {
   KIMI_CONFIG,
 } from '@/components/quota';
 import { Button } from '@/components/ui/Button';
-import type { AuthFileItem, OpenAIProviderConfig } from '@/types';
+import type { AuthFileItem, CodexQuotaWindow, OpenAIProviderConfig } from '@/types';
 import type { DisableCredentialTarget } from '@/services/api/credentialDisable';
 import { maskApiKey } from '@/utils/format';
 import { getStatusFromError } from '@/utils/quota';
@@ -49,6 +49,37 @@ const formatQuotaAmount = (value: number) =>
     maximumFractionDigits: 2,
   });
 
+const parseCodexResetDayInfo = (resetLabel: string) => {
+  const trimmed = String(resetLabel ?? '').trim();
+  const match = trimmed.match(/^(\d{1,2})\/(\d{1,2})/);
+  if (!match) return null;
+
+  const month = Number.parseInt(match[1], 10);
+  const day = Number.parseInt(match[2], 10);
+  if (!Number.isFinite(month) || !Number.isFinite(day)) return null;
+
+  const now = new Date();
+  const candidate = new Date(now.getFullYear(), month - 1, day, 0, 0, 0, 0);
+  if (candidate.getTime() < now.getTime() - 24 * 60 * 60 * 1000) {
+    candidate.setFullYear(candidate.getFullYear() + 1);
+  }
+
+  return {
+    dayKey: `${match[1]}/${match[2]}`,
+    sortTime: candidate.getTime(),
+  };
+};
+
+const getCodexWeeklyWindow = (file: AuthFileItem, codexQuota: Record<string, any>): CodexQuotaWindow | null => {
+  const quota = codexQuota[file.name];
+  if (!quota || quota.status !== 'success' || !Array.isArray(quota.windows)) {
+    return null;
+  }
+
+  const weeklyWindow = quota.windows.find((window: CodexQuotaWindow) => window.id === 'weekly');
+  return weeklyWindow ?? null;
+};
+
 export function QuotaPage() {
   const { t } = useTranslation();
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
@@ -62,6 +93,8 @@ export function QuotaPage() {
   const [deletingFailedConfigs, setDeletingFailedConfigs] = useState(false);
   const [credentialActionLoadingKey, setCredentialActionLoadingKey] = useState<string | null>(null);
   const [vercelBulkLoading, setVercelBulkLoading] = useState(false);
+  const [codexWeeklyLimitLoading, setCodexWeeklyLimitLoading] = useState(false);
+  const [codexWeeklySortEnabled, setCodexWeeklySortEnabled] = useState(false);
 
   const disableControls = connectionStatus !== 'connected';
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
@@ -77,6 +110,7 @@ export function QuotaPage() {
   const startCodexBulkQuery = useCodexBulkQueryStore((state) => state.startQuery);
   const stopCodexBulkQuery = useCodexBulkQueryStore((state) => state.stopQuery);
   const removeFailedCodexItems = useCodexBulkQueryStore((state) => state.removeFailedItems);
+  const codexQuota = useQuotaStore((state) => state.codexQuota);
   const vercelQuota = useQuotaStore((state) => state.vercelQuota);
   const setVercelQuota = useQuotaStore((state) => state.setVercelQuota);
   const disabledCredentialsSnapshot = useDisabledCredentialsStore((state) => state.snapshot);
@@ -151,6 +185,32 @@ export function QuotaPage() {
     if (successful.length === 0) return null;
     return successful.reduce((sum, item) => sum + (item.balance ?? 0), 0);
   }, [vercelQuota]);
+
+  const sortCodexFilesByWeeklyReset = useCallback(
+    (items: AuthFileItem[]) => {
+      if (!codexWeeklySortEnabled) return items;
+
+      const copy = [...items];
+      copy.sort((left, right) => {
+        const leftWeekly = getCodexWeeklyWindow(left, codexQuota);
+        const rightWeekly = getCodexWeeklyWindow(right, codexQuota);
+        const leftInfo = leftWeekly ? parseCodexResetDayInfo(leftWeekly.resetLabel) : null;
+        const rightInfo = rightWeekly ? parseCodexResetDayInfo(rightWeekly.resetLabel) : null;
+
+        const leftSort = leftInfo?.sortTime ?? Number.POSITIVE_INFINITY;
+        const rightSort = rightInfo?.sortTime ?? Number.POSITIVE_INFINITY;
+        if (leftSort !== rightSort) return leftSort - rightSort;
+
+        const leftReset = leftWeekly?.resetLabel ?? '';
+        const rightReset = rightWeekly?.resetLabel ?? '';
+        if (leftReset !== rightReset) return leftReset.localeCompare(rightReset);
+
+        return left.name.localeCompare(right.name);
+      });
+      return copy;
+    },
+    [codexQuota, codexWeeklySortEnabled]
+  );
 
   const loadConfig = useCallback(async () => {
     try {
@@ -478,6 +538,174 @@ export function QuotaPage() {
     );
   }, [runVercelQuotaBatch, vercelBulkLoading, vercelFiles, showNotification, t]);
 
+  const handleDisableByCodexWeeklyLimit = useCallback(async () => {
+    if (codexWeeklyLimitLoading) return;
+
+    const codexFiles = files.filter(
+      (file) => String(file.type ?? file.provider ?? '').trim().toLowerCase() === 'codex'
+    );
+
+    const weeklyCandidates = codexFiles
+      .map((file) => {
+        const weeklyWindow = getCodexWeeklyWindow(file, codexQuota);
+        if (!weeklyWindow) return null;
+
+        const usedPercent = typeof weeklyWindow.usedPercent === 'number'
+          ? weeklyWindow.usedPercent
+          : null;
+        const remainingPercent =
+          usedPercent === null
+            ? null
+            : Math.max(0, Math.min(100, 100 - usedPercent));
+        const dayInfo = parseCodexResetDayInfo(weeklyWindow.resetLabel);
+
+        return {
+          file,
+          remainingPercent,
+          resetLabel: weeklyWindow.resetLabel,
+          dayKey: dayInfo?.dayKey ?? `unknown:${file.name}`,
+          sortTime: dayInfo?.sortTime ?? Number.POSITIVE_INFINITY,
+        };
+      })
+      .filter(Boolean) as Array<{
+      file: AuthFileItem;
+      remainingPercent: number | null;
+      resetLabel: string;
+      dayKey: string;
+      sortTime: number;
+    }>;
+
+    if (weeklyCandidates.length === 0) {
+      showNotification(
+        t('quota_management.codex_weekly_limit_missing', {
+          defaultValue: '当前没有可用的 Codex 周限额数据，请先刷新额度',
+        }),
+        'warning'
+      );
+      return;
+    }
+
+    const nonZeroWeekly = weeklyCandidates.filter(
+      (item) => item.remainingPercent === null || item.remainingPercent > 0
+    );
+
+    nonZeroWeekly.sort((left, right) => {
+      if (left.sortTime !== right.sortTime) return left.sortTime - right.sortTime;
+      if (left.resetLabel !== right.resetLabel) return left.resetLabel.localeCompare(right.resetLabel);
+      return left.file.name.localeCompare(right.file.name);
+    });
+
+    const keepNames = new Set<string>();
+    let keptCount = 0;
+    let currentGroupKey = '';
+
+    for (const item of nonZeroWeekly) {
+      if (keptCount < 5) {
+        keepNames.add(item.file.name);
+        keptCount += 1;
+        currentGroupKey = item.dayKey;
+        continue;
+      }
+
+      if (item.dayKey === currentGroupKey) {
+        keepNames.add(item.file.name);
+        keptCount += 1;
+        continue;
+      }
+
+      break;
+    }
+
+    const disableTargets = new Set<string>();
+    const restoreTargets = new Set<string>();
+
+    weeklyCandidates.forEach((item) => {
+      const shouldKeep = keepNames.has(item.file.name);
+      const shouldDisable =
+        (item.remainingPercent !== null && item.remainingPercent <= 0) || !shouldKeep;
+
+      if (shouldDisable) {
+        disableTargets.add(item.file.name);
+      } else {
+        restoreTargets.add(item.file.name);
+      }
+    });
+
+    const changes = codexFiles.filter((file) => {
+      if (disableTargets.has(file.name) && file.disabled !== true) return true;
+      if (restoreTargets.has(file.name) && file.disabled === true) return true;
+      return false;
+    });
+
+    setCodexWeeklySortEnabled(true);
+
+    if (changes.length === 0) {
+      showNotification(
+        t('quota_management.codex_weekly_limit_no_change', {
+          defaultValue: '已按周限额规则整理，无需变更',
+        }),
+        'info'
+      );
+      return;
+    }
+
+    setCodexWeeklyLimitLoading(true);
+    try {
+      const results = await Promise.allSettled(
+        changes.map((file) =>
+          authFilesApi.setStatus(file.name, disableTargets.has(file.name))
+        )
+      );
+
+      let successCount = 0;
+      let failedCount = 0;
+      results.forEach((result) => {
+        if (result.status === 'fulfilled') {
+          successCount += 1;
+        } else {
+          failedCount += 1;
+        }
+      });
+
+      await Promise.all([loadFiles(), refreshDisabledCredentialsSnapshot(true)]);
+
+      if (failedCount === 0) {
+        showNotification(
+          t('quota_management.codex_weekly_limit_success', {
+            defaultValue:
+              '已按周限额自动整理凭证：保留 {{kept}} 个，禁用 {{disabled}} 个',
+            kept: keepNames.size,
+            disabled: disableTargets.size,
+          }),
+          'success'
+        );
+      } else {
+        showNotification(
+          t('quota_management.codex_weekly_limit_partial', {
+            defaultValue:
+              '周限额整理已完成：成功 {{success}} 个，失败 {{failed}} 个',
+            success: successCount,
+            failed: failedCount,
+          }),
+          'warning'
+        );
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : t('common.unknown_error');
+      showNotification(message, 'error');
+    } finally {
+      setCodexWeeklyLimitLoading(false);
+    }
+  }, [
+    codexQuota,
+    codexWeeklyLimitLoading,
+    files,
+    loadFiles,
+    refreshDisabledCredentialsSnapshot,
+    showNotification,
+    t,
+  ]);
+
   useEffect(() => {
     loadFiles();
     loadConfig();
@@ -520,16 +748,30 @@ export function QuotaPage() {
         files={files}
         loading={loading}
         disabled={disableControls}
+        sortItems={sortCodexFilesByWeeklyReset}
         renderCardAction={renderQuotaCredentialAction}
         extraHeaderActions={
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setCodexQueryModalOpen(true)}
-            disabled={disableControls}
-          >
-            {t('quota_management.codex_query_all')}
-          </Button>
+          <>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void handleDisableByCodexWeeklyLimit()}
+              disabled={disableControls || codexWeeklyLimitLoading}
+              loading={codexWeeklyLimitLoading}
+            >
+              {t('quota_management.codex_weekly_limit_disable', {
+                defaultValue: '按周限额禁用',
+              })}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setCodexQueryModalOpen(true)}
+              disabled={disableControls}
+            >
+              {t('quota_management.codex_query_all')}
+            </Button>
+          </>
         }
       />
       {vercelFiles.length > 0 ? (
