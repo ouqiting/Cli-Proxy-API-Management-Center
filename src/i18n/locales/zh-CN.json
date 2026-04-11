@@ -1373,7 +1373,9 @@
     "codex_query_delete_none": "当前没有可删除的报错配置",
     "codex_query_delete_success": "已删除 {{count}} 个报错配置",
     "codex_query_delete_partial": "已删除 {{success}} 个，失败 {{failed}} 个",
-    "codex_query_delete_failed_notice": "删除报错配置失败"
+    "codex_query_delete_failed_notice": "删除报错配置失败",
+    "vercel_query_all": "查询所有额度",
+    "vercel_query_summary": "Vercel 全量查询完成：{{count}} 个 key，耗时 {{duration}} 秒"
   },
   "system_info": {
     "title": "管理中心信息",

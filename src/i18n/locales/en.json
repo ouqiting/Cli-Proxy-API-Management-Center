@@ -1380,7 +1380,9 @@
     "codex_query_delete_none": "There are no failing configs to delete",
     "codex_query_delete_success": "Deleted {{count}} failing configs",
     "codex_query_delete_partial": "Deleted {{success}}, failed {{failed}}",
-    "codex_query_delete_failed_notice": "Failed to delete failing configs"
+    "codex_query_delete_failed_notice": "Failed to delete failing configs",
+    "vercel_query_all": "Query all quota",
+    "vercel_query_summary": "Vercel bulk query finished: {{count}} keys in {{duration}}s"
   },
   "system_info": {
     "title": "Management Center Info",

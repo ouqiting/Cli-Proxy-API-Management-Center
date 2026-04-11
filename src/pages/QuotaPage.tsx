@@ -21,12 +21,13 @@ import {
   CODEX_CONFIG,
   VERCEL_CONFIG,
   GEMINI_CLI_CONFIG,
-  KIMI_CONFIG
+  KIMI_CONFIG,
 } from '@/components/quota';
 import { Button } from '@/components/ui/Button';
 import type { AuthFileItem, OpenAIProviderConfig } from '@/types';
 import type { DisableCredentialTarget } from '@/services/api/credentialDisable';
 import { maskApiKey } from '@/utils/format';
+import { getStatusFromError } from '@/utils/quota';
 import styles from './QuotaPage.module.scss';
 
 const VERCEL_GATEWAY_BASE_URL = 'https://ai-gateway.vercel.sh/v1';
@@ -60,6 +61,7 @@ export function QuotaPage() {
   const [codexQueryModalOpen, setCodexQueryModalOpen] = useState(false);
   const [deletingFailedConfigs, setDeletingFailedConfigs] = useState(false);
   const [credentialActionLoadingKey, setCredentialActionLoadingKey] = useState<string | null>(null);
+  const [vercelBulkLoading, setVercelBulkLoading] = useState(false);
 
   const disableControls = connectionStatus !== 'connected';
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
@@ -76,6 +78,7 @@ export function QuotaPage() {
   const stopCodexBulkQuery = useCodexBulkQueryStore((state) => state.stopQuery);
   const removeFailedCodexItems = useCodexBulkQueryStore((state) => state.removeFailedItems);
   const vercelQuota = useQuotaStore((state) => state.vercelQuota);
+  const setVercelQuota = useQuotaStore((state) => state.setVercelQuota);
   const disabledCredentialsSnapshot = useDisabledCredentialsStore((state) => state.snapshot);
   const refreshDisabledCredentialsSnapshot = useDisabledCredentialsStore(
     (state) => state.refreshSnapshot
@@ -361,6 +364,120 @@ export function QuotaPage() {
 
   useHeaderRefresh(handleHeaderRefresh);
 
+  const isRetryableVercelError = useCallback((error: unknown) => {
+    const status = getStatusFromError(error);
+    if (status !== undefined) {
+      return false;
+    }
+
+    if (error && typeof error === 'object' && 'code' in error) {
+      const code = String((error as { code?: unknown }).code ?? '').trim().toUpperCase();
+      if (code === 'ECONNABORTED' || code === 'ERR_NETWORK' || code === 'ERR_CONNECTION_RESET') {
+        return true;
+      }
+    }
+
+    const message =
+      error instanceof Error ? error.message.trim().toLowerCase() : String(error ?? '').trim().toLowerCase();
+
+    return (
+      message.includes('network') ||
+      message.includes('timeout') ||
+      message.includes('timed out') ||
+      message.includes('connection reset') ||
+      message.includes('failed to fetch')
+    );
+  }, []);
+
+  const runVercelQuotaBatch = useCallback(
+    async (targets: AuthFileItem[], options?: { collectRetryable?: boolean }) => {
+      if (targets.length === 0) return [] as AuthFileItem[];
+
+      setVercelQuota((prev) => {
+        const next = { ...prev };
+        targets.forEach((item) => {
+          next[item.name] = VERCEL_CONFIG.buildLoadingState();
+        });
+        return next;
+      });
+
+      const retryableTargets: AuthFileItem[] = [];
+      const results = await Promise.all(
+        targets.map(async (item) => {
+          try {
+            const data = await VERCEL_CONFIG.fetchQuota(item, t);
+            return { item, status: 'success' as const, data };
+          } catch (error: unknown) {
+            return {
+              item,
+              status: 'error' as const,
+              error,
+              retryable: options?.collectRetryable === true && isRetryableVercelError(error),
+            };
+          }
+        })
+      );
+
+      setVercelQuota((prev) => {
+        const next = { ...prev };
+        results.forEach((result) => {
+          if (result.status === 'success') {
+            next[result.item.name] = VERCEL_CONFIG.buildSuccessState(result.data);
+            return;
+          }
+
+          const message =
+            result.error instanceof Error ? result.error.message : t('common.unknown_error');
+          const errorStatus = getStatusFromError(result.error);
+          next[result.item.name] = VERCEL_CONFIG.buildErrorState(message, errorStatus);
+
+          if (result.retryable) {
+            retryableTargets.push(result.item);
+          }
+        });
+        return next;
+      });
+
+      return retryableTargets;
+    },
+    [isRetryableVercelError, setVercelQuota, t]
+  );
+
+  const handleVercelBulkQuery = useCallback(async () => {
+    if (vercelBulkLoading) return;
+
+    const start = performance.now();
+    setVercelBulkLoading(true);
+
+    const retryTargets: AuthFileItem[] = [];
+    const firstRoundChunk = 60;
+    for (let i = 0; i < vercelFiles.length; i += firstRoundChunk) {
+      const sliced = vercelFiles.slice(i, i + firstRoundChunk);
+      const batchRetryTargets = await runVercelQuotaBatch(sliced, { collectRetryable: true });
+      retryTargets.push(...batchRetryTargets);
+    }
+
+    if (retryTargets.length > 0) {
+      const secondRoundChunk = 10;
+      for (let i = 0; i < retryTargets.length; i += secondRoundChunk) {
+        const sliced = retryTargets.slice(i, i + secondRoundChunk);
+        await runVercelQuotaBatch(sliced);
+      }
+    }
+
+    setVercelBulkLoading(false);
+
+    const duration = performance.now() - start;
+    const seconds = (duration / 1000).toFixed(2);
+    showNotification(
+      t('quota_management.vercel_query_summary', {
+        count: vercelFiles.length,
+        duration: seconds
+      }),
+      'success'
+    );
+  }, [runVercelQuotaBatch, vercelBulkLoading, vercelFiles, showNotification, t]);
+
   useEffect(() => {
     loadFiles();
     loadConfig();
@@ -432,6 +549,17 @@ export function QuotaPage() {
               </div>
             ) : undefined
           }
+        extraHeaderActions={
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleVercelBulkQuery}
+            disabled={disableControls || vercelBulkLoading}
+            loading={vercelBulkLoading}
+          >
+            {t('quota_management.vercel_query_all')}
+          </Button>
+        }
         />
       ) : null}
       <QuotaSection
