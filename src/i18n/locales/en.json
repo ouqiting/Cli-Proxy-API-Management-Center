@@ -1013,8 +1013,8 @@
     "model_price_title": "Model Pricing",
     "model_price_reset": "Clear Prices",
     "model_price_model_label": "Model",
-    "model_price_select_placeholder": "Choose a model",
-    "model_price_select_hint": "Models come from usage details",
+    "model_price_select_placeholder": "Enter model name",
+    "model_price_select_hint": "Type a model name manually to set pricing",
     "model_price_prompt": "Prompt price",
     "model_price_completion": "Completion price",
     "model_price_cache": "Cache price",
@@ -1699,7 +1699,7 @@
     "scope_preferences": "User Preferences",
     "scope_config": "Backend Config",
     "scope_usage": "Usage Statistics",
-    "scope_localStorage_detail": "Theme, language, sidebar state, auth files page size, model prices and other browser local storage",
+    "scope_localStorage_detail": "Theme, language, sidebar state, auth files page size, model prices, and other browser local storage values; when enabled, they are included in the WebDAV cloud backup",
     "scope_config_detail": "Full content of backend config.yaml, including API keys, proxy settings, routing strategy and other sensitive info",
     "config_warning_title": "Security Notice",
     "config_warning_message": "The backend config (config.yaml) contains sensitive information such as API keys. Although backup files are encoded, this is not strong encryption. Please ensure your WebDAV server is secure and keep backup files safe.",
@@ -1759,7 +1759,7 @@
     "restore_success": "Restore successful. Some settings may require a page refresh to take effect",
     "restore_failed": "Restore failed",
     "invalid_format": "Invalid backup file format",
-    "scope_preferences_hint": "Theme, language, sidebar state, etc.",
+    "scope_preferences_hint": "Theme, language, sidebar state, etc. These are included in the WebDAV cloud backup when enabled",
     "scope_config_restore_hint": "View only, will not write to backend automatically",
     "scope_usage_hint": "Import usage statistics to backend"
   }

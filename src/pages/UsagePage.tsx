@@ -388,7 +388,6 @@ export function UsagePage() {
 
       {/* Price Settings */}
       <PriceSettingsCard
-        modelNames={modelNames}
         modelPrices={modelPrices}
         onPricesChange={setModelPrices}
       />

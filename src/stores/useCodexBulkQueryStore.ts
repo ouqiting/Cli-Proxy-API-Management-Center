@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import i18n from '@/i18n';
 import type { TFunction } from 'i18next';
 import type {
+  AuthFileItem,
   CodexBulkQueryFailedItem,
   CodexBulkQueryState,
   CodexQuotaState,
@@ -23,6 +24,7 @@ interface CodexBulkQueryStoreState extends CodexBulkQueryState {
 }
 
 const BATCH_SIZE = 10;
+const RETRY_BATCH_SIZE = 4;
 
 const initialState: CodexBulkQueryState = {
   hasEverRun: false,
@@ -60,6 +62,18 @@ const buildCodexErrorState = (message: string, errorStatus?: number): CodexQuota
   error: message,
   errorStatus,
 });
+
+const isRetryableCodexQuotaError = (error: unknown): boolean => {
+  const status = getStatusFromError(error);
+  if (status !== undefined) {
+    return false;
+  }
+
+  const message =
+    error instanceof Error ? error.message.trim().toLowerCase() : String(error ?? '').trim().toLowerCase();
+
+  return message === 'request failed' || message.endsWith('request failed');
+};
 
 const restoreCodexQuotaState = (fileName: string, previousState?: CodexQuotaState) => {
   useQuotaStore.getState().setCodexQuota((prev) => {
@@ -101,33 +115,6 @@ const isAbortLikeError = (error: unknown): boolean => {
   }
 
   return false;
-};
-
-const appendFailedItem = (
-  set: (
-    partial:
-      | Partial<CodexBulkQueryStoreState>
-      | ((state: CodexBulkQueryStoreState) => Partial<CodexBulkQueryStoreState>)
-  ) => void,
-  item: CodexBulkQueryFailedItem
-) => {
-  set((state) => ({
-    completed: state.completed + 1,
-    errorCount: state.errorCount + 1,
-    failedItems: [...state.failedItems, item],
-  }));
-};
-
-const incrementCompleted = (
-  set: (
-    partial:
-      | Partial<CodexBulkQueryStoreState>
-      | ((state: CodexBulkQueryStoreState) => Partial<CodexBulkQueryStoreState>)
-  ) => void
-) => {
-  set((state) => ({
-    completed: state.completed + 1,
-  }));
 };
 
 const finalizeCompletion = (
@@ -185,6 +172,75 @@ const finalizeTermination = (
     .showNotification(t('quota_management.codex_query_terminated'), 'info');
 };
 
+const runCodexQuotaBatch = async (
+  targets: AuthFileItem[],
+  runId: number,
+  options?: { collectRetryable?: boolean }
+) => {
+  const retryableTargets: AuthFileItem[] = [];
+  const failedResults: Array<{ fileName: string; message: string; errorStatus?: number }> = [];
+  let completedCount = 0;
+
+  if (targets.length === 0) {
+    return { retryableTargets, failedResults, completedCount };
+  }
+
+  await Promise.allSettled(
+    targets.map(async (file) => {
+      const previousQuotaState = useQuotaStore.getState().codexQuota[file.name];
+
+      setCodexQuotaState(file.name, buildCodexLoadingState());
+
+      try {
+        const data = await fetchCodexQuotaData(file, t, {
+          signal: activeAbortController?.signal,
+        });
+
+        if (activeRunId !== runId) return;
+
+        const failureMessage = resolveCodexBulkFailureMessage(data, t);
+        if (failureMessage) {
+          setCodexQuotaState(file.name, buildCodexErrorState(failureMessage));
+          failedResults.push({
+            fileName: file.name,
+            message: failureMessage,
+          });
+          completedCount += 1;
+          return;
+        }
+
+        setCodexQuotaState(file.name, buildCodexSuccessState(data));
+        completedCount += 1;
+      } catch (error: unknown) {
+        if (activeRunId !== runId) return;
+
+        if (activeAbortController?.signal.aborted && isAbortLikeError(error)) {
+          restoreCodexQuotaState(file.name, previousQuotaState);
+          return;
+        }
+
+        const message =
+          error instanceof Error ? error.message : t('common.unknown_error');
+        const errorStatus = getStatusFromError(error);
+
+        setCodexQuotaState(file.name, buildCodexErrorState(message, errorStatus));
+        failedResults.push({
+          fileName: file.name,
+          message,
+          errorStatus,
+        });
+        completedCount += 1;
+
+        if (options?.collectRetryable && isRetryableCodexQuotaError(error)) {
+          retryableTargets.push(file);
+        }
+      }
+    })
+  );
+
+  return { retryableTargets, failedResults, completedCount };
+};
+
 export const useCodexBulkQueryStore = create<CodexBulkQueryStoreState>((set, get) => ({
   ...initialState,
 
@@ -222,6 +278,10 @@ export const useCodexBulkQueryStore = create<CodexBulkQueryStoreState>((set, get
         return;
       }
 
+      const failedByFileName = new Map<string, CodexBulkQueryFailedItem>();
+      let completedCount = 0;
+      const retryTargets: AuthFileItem[] = [];
+
       for (let index = 0; index < targets.length; index += BATCH_SIZE) {
         if (activeRunId !== runId) return;
         if (activeAbortController?.signal.aborted) {
@@ -230,52 +290,43 @@ export const useCodexBulkQueryStore = create<CodexBulkQueryStoreState>((set, get
         }
 
         const batch = targets.slice(index, index + BATCH_SIZE);
-        await Promise.allSettled(
-          batch.map(async (file) => {
-            const previousQuotaState = useQuotaStore.getState().codexQuota[file.name];
+        const result = await runCodexQuotaBatch(batch, runId, { collectRetryable: true });
+        result.retryableTargets.forEach((file) => retryTargets.push(file));
+        result.failedResults.forEach((item) => failedByFileName.set(item.fileName, item));
+        completedCount += result.completedCount;
+        set({
+          completed: completedCount,
+          errorCount: failedByFileName.size,
+          failedItems: Array.from(failedByFileName.values()),
+        });
+      }
 
-            setCodexQuotaState(file.name, buildCodexLoadingState());
+      if (retryTargets.length > 0) {
+        for (let index = 0; index < retryTargets.length; index += RETRY_BATCH_SIZE) {
+          if (activeRunId !== runId) return;
+          if (activeAbortController?.signal.aborted) {
+            finalizeTermination(set, runId);
+            return;
+          }
 
-            try {
-              const data = await fetchCodexQuotaData(file, t, {
-                signal: activeAbortController?.signal,
-              });
-
-              if (activeRunId !== runId) return;
-
-              const failureMessage = resolveCodexBulkFailureMessage(data, t);
-              if (failureMessage) {
-                setCodexQuotaState(file.name, buildCodexErrorState(failureMessage));
-                appendFailedItem(set, {
-                  fileName: file.name,
-                  message: failureMessage,
-                });
-                return;
-              }
-
-              setCodexQuotaState(file.name, buildCodexSuccessState(data));
-              incrementCompleted(set);
-            } catch (error: unknown) {
-              if (activeRunId !== runId) return;
-
-              if (activeAbortController?.signal.aborted && isAbortLikeError(error)) {
-                restoreCodexQuotaState(file.name, previousQuotaState);
-                return;
-              }
-
-              const message =
-                error instanceof Error ? error.message : t('common.unknown_error');
-              const errorStatus = getStatusFromError(error);
-
-              setCodexQuotaState(file.name, buildCodexErrorState(message, errorStatus));
-              appendFailedItem(set, {
-                fileName: file.name,
-                message,
-                errorStatus,
-              });
+          const batch = retryTargets.slice(index, index + RETRY_BATCH_SIZE);
+          const result = await runCodexQuotaBatch(batch, runId);
+          result.failedResults.forEach((item) =>
+            failedByFileName.set(item.fileName, {
+              ...item,
+              message: `${item.message}（已重试 1 次）`,
+            })
+          );
+          batch.forEach((file) => {
+            if (!result.failedResults.some((item) => item.fileName === file.name)) {
+              failedByFileName.delete(file.name);
             }
-          })
-        );
+          });
+          set({
+            errorCount: failedByFileName.size,
+            failedItems: Array.from(failedByFileName.values()),
+          });
+        }
       }
 
       if (activeAbortController?.signal.aborted) {

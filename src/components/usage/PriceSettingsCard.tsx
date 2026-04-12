@@ -1,28 +1,25 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
-import { Select } from '@/components/ui/Select';
 import type { ModelPrice } from '@/utils/usage';
 import styles from '@/pages/UsagePage.module.scss';
 
 export interface PriceSettingsCardProps {
-  modelNames: string[];
   modelPrices: Record<string, ModelPrice>;
   onPricesChange: (prices: Record<string, ModelPrice>) => void;
 }
 
 export function PriceSettingsCard({
-  modelNames,
   modelPrices,
   onPricesChange
 }: PriceSettingsCardProps) {
   const { t } = useTranslation();
 
   // Add form state
-  const [selectedModel, setSelectedModel] = useState('');
+  const [modelName, setModelName] = useState('');
   const [promptPrice, setPromptPrice] = useState('');
   const [completionPrice, setCompletionPrice] = useState('');
   const [cachePrice, setCachePrice] = useState('');
@@ -34,13 +31,14 @@ export function PriceSettingsCard({
   const [editCache, setEditCache] = useState('');
 
   const handleSavePrice = () => {
-    if (!selectedModel) return;
+    const normalizedModelName = modelName.trim();
+    if (!normalizedModelName) return;
     const prompt = parseFloat(promptPrice) || 0;
     const completion = parseFloat(completionPrice) || 0;
     const cache = cachePrice.trim() === '' ? prompt : parseFloat(cachePrice) || 0;
-    const newPrices = { ...modelPrices, [selectedModel]: { prompt, completion, cache } };
+    const newPrices = { ...modelPrices, [normalizedModelName]: { prompt, completion, cache } };
     onPricesChange(newPrices);
-    setSelectedModel('');
+    setModelName('');
     setPromptPrice('');
     setCompletionPrice('');
     setCachePrice('');
@@ -70,9 +68,9 @@ export function PriceSettingsCard({
     setEditModel(null);
   };
 
-  const handleModelSelect = (value: string) => {
-    setSelectedModel(value);
-    const price = modelPrices[value];
+  const handleModelNameChange = (value: string) => {
+    setModelName(value);
+    const price = modelPrices[value.trim()];
     if (price) {
       setPromptPrice(price.prompt.toString());
       setCompletionPrice(price.completion.toString());
@@ -84,14 +82,6 @@ export function PriceSettingsCard({
     }
   };
 
-  const options = useMemo(
-    () => [
-      { value: '', label: t('usage_stats.model_price_select_placeholder') },
-      ...modelNames.map((name) => ({ value: name, label: name }))
-    ],
-    [modelNames, t]
-  );
-
   return (
     <Card title={t('usage_stats.model_price_settings')}>
       <div className={styles.pricingSection}>
@@ -100,10 +90,9 @@ export function PriceSettingsCard({
           <div className={styles.formRow}>
             <div className={styles.formField}>
               <label>{t('usage_stats.model_name')}</label>
-              <Select
-                value={selectedModel}
-                options={options}
-                onChange={handleModelSelect}
+              <Input
+                value={modelName}
+                onChange={(e) => handleModelNameChange(e.target.value)}
                 placeholder={t('usage_stats.model_price_select_placeholder')}
               />
             </div>
@@ -137,7 +126,7 @@ export function PriceSettingsCard({
                 step="0.0001"
               />
             </div>
-            <Button variant="primary" onClick={handleSavePrice} disabled={!selectedModel}>
+            <Button variant="primary" onClick={handleSavePrice} disabled={!modelName.trim()}>
               {t('common.save')}
             </Button>
           </div>
