@@ -3,8 +3,11 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { authFilesApi } from '@/services/api/authFiles';
+import { logsApi, type RequestLogDetailResponse } from '@/services/api/logs';
+import type { ApiError } from '@/types';
 import type { GeminiKeyConfig, ProviderKeyConfig, OpenAIProviderConfig } from '@/types';
 import type { AuthFileItem } from '@/types/authFile';
 import type { CredentialInfo } from '@/types/sourceInfo';
@@ -31,11 +34,40 @@ type RequestEventRow = {
   sourceType: string;
   authIndex: string;
   failed: boolean;
+  requestId?: string;
+  method?: string;
+  path?: string;
+  statusCode?: number;
+  upstreamStatusCode?: number;
+  errorStage?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  upstreamErrorMessage?: string;
+  latencyMs?: number;
   inputTokens: number;
   outputTokens: number;
   reasoningTokens: number;
   cachedTokens: number;
   totalTokens: number;
+};
+
+const getErrorMessage = (err: unknown): string => {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  if (typeof err !== 'object' || err === null || !('message' in err)) return '';
+
+  const message = (err as { message?: unknown }).message;
+  return typeof message === 'string' ? message : '';
+};
+
+const stringifyData = (value: unknown): string => {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 };
 
 export interface RequestEventsDetailsCardProps {
@@ -53,6 +85,14 @@ const toNumber = (value: unknown): number => {
   if (!Number.isFinite(parsed)) return 0;
   return parsed;
 };
+
+const toOptionalNumber = (value: unknown): number | undefined => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const getDisplayStatusCode = (statusCode?: number, upstreamStatusCode?: number): number | undefined =>
+  upstreamStatusCode ?? statusCode;
 
 const encodeCsv = (value: string | number): string => {
   const text = String(value ?? '');
@@ -76,6 +116,10 @@ export function RequestEventsDetailsCard({
   const [sourceFilter, setSourceFilter] = useState(ALL_FILTER);
   const [authIndexFilter, setAuthIndexFilter] = useState(ALL_FILTER);
   const [authFileMap, setAuthFileMap] = useState<Map<string, CredentialInfo>>(new Map());
+  const [detailRow, setDetailRow] = useState<RequestEventRow | null>(null);
+  const [detailData, setDetailData] = useState<RequestLogDetailResponse | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -158,6 +202,16 @@ export function RequestEventsDetailsCard({
           sourceType,
           authIndex,
           failed: detail.failed === true,
+          requestId: detail.request_id,
+          method: detail.method,
+          path: detail.path,
+          statusCode: toOptionalNumber(detail.status_code),
+          upstreamStatusCode: toOptionalNumber(detail.upstream_status_code),
+          errorStage: detail.error_stage,
+          errorCode: detail.error_code,
+          errorMessage: detail.error_message,
+          upstreamErrorMessage: detail.upstream_error_message,
+          latencyMs: toOptionalNumber(detail.latency_ms),
           inputTokens,
           outputTokens,
           reasoningTokens,
@@ -248,6 +302,28 @@ export function RequestEventsDetailsCard({
     setAuthIndexFilter(ALL_FILTER);
   };
 
+  const handleOpenDetail = async (row: RequestEventRow) => {
+    setDetailRow(row);
+    setDetailData(null);
+    setDetailError('');
+
+    if (!row.requestId) {
+      return;
+    }
+
+    setDetailLoading(true);
+    try {
+      const response = await logsApi.fetchRequestLogDetail(row.requestId);
+      setDetailData(response);
+    } catch (err: unknown) {
+      if ((err as ApiError).status !== 404) {
+        setDetailError(getErrorMessage(err) || t('usage_stats.request_events_detail_error'));
+      }
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
   const handleExportCsv = () => {
     if (!filteredRows.length) return;
 
@@ -257,7 +333,17 @@ export function RequestEventsDetailsCard({
       'source',
       'source_raw',
       'auth_index',
+      'request_id',
+      'method',
+      'path',
       'result',
+      'status_code',
+      'upstream_status_code',
+      'error_stage',
+      'error_code',
+      'error_message',
+      'upstream_error_message',
+      'latency_ms',
       'input_tokens',
       'output_tokens',
       'reasoning_tokens',
@@ -272,7 +358,17 @@ export function RequestEventsDetailsCard({
         row.source,
         row.sourceRaw,
         row.authIndex,
+        row.requestId || '',
+        row.method || '',
+        row.path || '',
         row.failed ? 'failed' : 'success',
+        row.statusCode ?? '',
+        row.upstreamStatusCode ?? '',
+        row.errorStage || '',
+        row.errorCode || '',
+        row.errorMessage || '',
+        row.upstreamErrorMessage || '',
+        row.latencyMs ?? '',
         row.inputTokens,
         row.outputTokens,
         row.reasoningTokens,
@@ -300,7 +396,17 @@ export function RequestEventsDetailsCard({
       source: row.source,
       source_raw: row.sourceRaw,
       auth_index: row.authIndex,
+      request_id: row.requestId,
+      method: row.method,
+      path: row.path,
       failed: row.failed,
+      status_code: row.statusCode,
+      upstream_status_code: row.upstreamStatusCode,
+      error_stage: row.errorStage,
+      error_code: row.errorCode,
+      error_message: row.errorMessage,
+      upstream_error_message: row.upstreamErrorMessage,
+      latency_ms: row.latencyMs,
       tokens: {
         input_tokens: row.inputTokens,
         output_tokens: row.outputTokens,
@@ -427,11 +533,13 @@ export function RequestEventsDetailsCard({
                   <th>{t('usage_stats.request_events_source')}</th>
                   <th>{t('usage_stats.request_events_auth_index')}</th>
                   <th>{t('usage_stats.request_events_result')}</th>
+                  <th>{t('usage_stats.request_events_status_code')}</th>
                   <th>{t('usage_stats.input_tokens')}</th>
                   <th>{t('usage_stats.output_tokens')}</th>
                   <th>{t('usage_stats.reasoning_tokens')}</th>
                   <th>{t('usage_stats.cached_tokens')}</th>
                   <th>{t('usage_stats.total_tokens')}</th>
+                  <th>{t('usage_stats.request_events_actions')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -457,11 +565,29 @@ export function RequestEventsDetailsCard({
                         {row.failed ? t('stats.failure') : t('stats.success')}
                       </span>
                     </td>
+                    <td>
+                      {typeof getDisplayStatusCode(row.statusCode, row.upstreamStatusCode) === 'number' ? (
+                        <span className={styles.requestEventsStatusBadge}>
+                          {getDisplayStatusCode(row.statusCode, row.upstreamStatusCode)}
+                        </span>
+                      ) : (
+                        '-'
+                      )}
+                    </td>
                     <td>{row.inputTokens.toLocaleString()}</td>
                     <td>{row.outputTokens.toLocaleString()}</td>
                     <td>{row.reasoningTokens.toLocaleString()}</td>
                     <td>{row.cachedTokens.toLocaleString()}</td>
                     <td>{row.totalTokens.toLocaleString()}</td>
+                    <td className={styles.requestEventsActionCell}>
+                      {row.failed ? (
+                        <Button variant="secondary" size="sm" onClick={() => void handleOpenDetail(row)}>
+                          {t('common.details')}
+                        </Button>
+                      ) : (
+                        '-'
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -469,6 +595,98 @@ export function RequestEventsDetailsCard({
           </div>
         </>
       )}
+
+      <Modal
+        open={detailRow !== null}
+        title={detailRow ? `${t('usage_stats.request_events_detail_title')} · ${detailRow.model}` : ''}
+        onClose={() => setDetailRow(null)}
+        width={760}
+      >
+        {detailRow && (
+          <div className={styles.requestDetailPanel}>
+            <div className={styles.requestDetailGrid}>
+              <div className={styles.requestDetailItem}>
+                <span className={styles.requestDetailLabel}>{t('usage_stats.request_events_request_id')}</span>
+                <span className={styles.requestDetailValue}>{detailRow.requestId || '-'}</span>
+              </div>
+              <div className={styles.requestDetailItem}>
+                <span className={styles.requestDetailLabel}>{t('usage_stats.request_events_method')}</span>
+                <span className={styles.requestDetailValue}>
+                  {detailData?.method || detailRow.method || '-'}
+                </span>
+              </div>
+              <div className={styles.requestDetailItem}>
+                <span className={styles.requestDetailLabel}>{t('usage_stats.request_events_path')}</span>
+                <span className={styles.requestDetailValue}>
+                  {detailData?.path || detailRow.path || '-'}
+                </span>
+              </div>
+              <div className={styles.requestDetailItem}>
+                <span className={styles.requestDetailLabel}>{t('usage_stats.request_events_status_code')}</span>
+                <span className={styles.requestDetailValue}>
+                  {getDisplayStatusCode(
+                    detailData?.status_code ?? detailRow.statusCode,
+                    detailData?.upstream_status_code ?? detailRow.upstreamStatusCode
+                  ) ?? '-'}
+                </span>
+              </div>
+              <div className={styles.requestDetailItem}>
+                <span className={styles.requestDetailLabel}>{t('usage_stats.request_events_latency')}</span>
+                <span className={styles.requestDetailValue}>
+                  {detailData?.latency_ms ?? detailRow.latencyMs ?? '-'}
+                </span>
+              </div>
+              <div className={styles.requestDetailItem}>
+                <span className={styles.requestDetailLabel}>{t('usage_stats.request_events_error_stage')}</span>
+                <span className={styles.requestDetailValue}>
+                  {detailData?.error?.stage || detailRow.errorStage || '-'}
+                </span>
+              </div>
+              <div className={styles.requestDetailItem}>
+                <span className={styles.requestDetailLabel}>{t('usage_stats.request_events_error_code')}</span>
+                <span className={styles.requestDetailValue}>
+                  {detailData?.error?.code || detailRow.errorCode || '-'}
+                </span>
+              </div>
+            </div>
+
+            {detailLoading && <div className={styles.hint}>{t('usage_stats.request_events_detail_loading')}</div>}
+            {!detailLoading && detailError && <div className="error-box">{detailError}</div>}
+
+            {(detailData?.error || detailRow.errorMessage || detailRow.upstreamErrorMessage) && (
+              <div className={styles.requestDetailSection}>
+                <div className={styles.requestDetailSectionTitle}>
+                  {t('usage_stats.request_events_error_summary')}
+                </div>
+                <pre className={styles.requestDetailPre}>
+                  {detailData?.error?.message ||
+                    detailData?.error?.upstream_message ||
+                    detailRow.errorMessage ||
+                    detailRow.upstreamErrorMessage ||
+                    '-'}
+                </pre>
+              </div>
+            )}
+
+            {(detailData?.upstream?.body_json !== undefined ||
+              detailData?.upstream?.body_text !== undefined) && (
+              <div className={styles.requestDetailSection}>
+                <div className={styles.requestDetailSectionTitle}>
+                  {t('usage_stats.request_events_upstream_body')}
+                </div>
+                {detailData?.upstream?.body_json !== undefined && (
+                  <pre className={styles.requestDetailPre}>
+                    {stringifyData(detailData.upstream.body_json)}
+                  </pre>
+                )}
+                {detailData?.upstream?.body_json === undefined && detailData?.upstream?.body_text && (
+                  <pre className={styles.requestDetailPre}>{detailData.upstream.body_text}</pre>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
     </Card>
   );
 }

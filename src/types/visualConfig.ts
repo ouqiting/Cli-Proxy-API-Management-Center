@@ -10,6 +10,7 @@ export type VisualConfigFieldPath =
   | 'requestRetry'
   | 'maxRetryCredentials'
   | 'maxRetryInterval'
+  | 'upstreamTimeout'
   | 'streaming.keepaliveSeconds'
   | 'streaming.bootstrapRetries'
   | 'streaming.nonstreamKeepaliveInterval';
@@ -73,6 +74,7 @@ export type VisualConfigValues = {
   requestRetry: string;
   maxRetryCredentials: string;
   maxRetryInterval: string;
+  upstreamTimeout: string;
   quotaSwitchProject: boolean;
   quotaSwitchPreviewModel: boolean;
   routingStrategy: 'round-robin' | 'fill-first';
@@ -112,6 +114,7 @@ export const DEFAULT_VISUAL_VALUES: VisualConfigValues = {
   requestRetry: '',
   maxRetryCredentials: '',
   maxRetryInterval: '',
+  upstreamTimeout: '',
   quotaSwitchProject: true,
   quotaSwitchPreviewModel: true,
   routingStrategy: 'round-robin',

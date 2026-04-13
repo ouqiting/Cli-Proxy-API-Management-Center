@@ -134,6 +134,11 @@ export function Modal({
   const modalRef = useRef<HTMLDivElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   const getFocusableElements = useCallback(() => {
     if (!modalRef.current) return [] as HTMLElement[];
@@ -151,11 +156,11 @@ export function Modal({
         setIsClosing(false);
         closeTimerRef.current = null;
         if (notifyParent) {
-          onClose();
+          onCloseRef.current();
         }
       }, CLOSE_ANIMATION_DURATION);
     },
-    [onClose]
+    []
   );
 
   useEffect(() => {

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { IconGithub, IconBookOpen, IconExternalLink, IconCode } from '@/components/ui/icons';
+import type { ApiError } from '@/types';
 import {
   useAuthStore,
   useConfigStore,
@@ -12,7 +13,7 @@ import {
   useModelsStore,
   useThemeStore,
 } from '@/stores';
-import { configApi, versionApi } from '@/services/api';
+import { configApi, managementApi } from '@/services/api';
 import { apiKeysApi } from '@/services/api/apiKeys';
 import { classifyModels } from '@/utils/models';
 import { STORAGE_KEY_AUTH } from '@/utils/constants';
@@ -42,30 +43,58 @@ const MODEL_CATEGORY_ICONS: Record<string, string | { light: string; dark: strin
   minimax: iconMinimax,
 };
 
-const parseVersionSegments = (version?: string | null) => {
-  if (!version) return null;
-  const cleaned = version.trim().replace(/^v/i, '');
-  if (!cleaned) return null;
-  const parts = cleaned
-    .split(/[^0-9]+/)
-    .filter(Boolean)
-    .map((segment) => Number.parseInt(segment, 10))
-    .filter(Number.isFinite);
-  return parts.length ? parts : null;
+type WebuiUpdateLog = {
+  time: string;
+  level: string;
+  message: string;
 };
 
-const compareVersions = (latest?: string | null, current?: string | null) => {
-  const latestParts = parseVersionSegments(latest);
-  const currentParts = parseVersionSegments(current);
-  if (!latestParts || !currentParts) return null;
-  const length = Math.max(latestParts.length, currentParts.length);
-  for (let i = 0; i < length; i++) {
-    const l = latestParts[i] || 0;
-    const c = currentParts[i] || 0;
-    if (l > c) return 1;
-    if (l < c) return -1;
-  }
-  return 0;
+type WebuiUpdateDialogState = {
+  success: boolean;
+  updated: boolean;
+  message: string;
+  filePath?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  durationMs?: number;
+  logs: WebuiUpdateLog[];
+  error?: string;
+};
+
+const normalizeWebuiUpdateLogs = (input: unknown): WebuiUpdateLog[] => {
+  if (!Array.isArray(input)) return [];
+
+  return input
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+      const record = entry as Record<string, unknown>;
+      return {
+        time: typeof record.time === 'string' ? record.time : '',
+        level: typeof record.level === 'string' ? record.level : 'info',
+        message: typeof record.message === 'string' ? record.message : '',
+      };
+    })
+    .filter((entry): entry is WebuiUpdateLog => Boolean(entry?.message));
+};
+
+const toWebuiUpdateDialogState = (input: unknown): WebuiUpdateDialogState | null => {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+
+  const record = input as Record<string, unknown>;
+  const message = typeof record.message === 'string' ? record.message : '';
+  if (!message) return null;
+
+  return {
+    success: Boolean(record.success),
+    updated: Boolean(record.updated),
+    message,
+    filePath: typeof record.file_path === 'string' ? record.file_path : undefined,
+    startedAt: typeof record.started_at === 'string' ? record.started_at : undefined,
+    finishedAt: typeof record.finished_at === 'string' ? record.finished_at : undefined,
+    durationMs: typeof record.duration_ms === 'number' ? record.duration_ms : undefined,
+    logs: normalizeWebuiUpdateLogs(record.logs),
+    error: typeof record.error === 'string' ? record.error : undefined,
+  };
 };
 
 export function SystemPage() {
@@ -91,7 +120,9 @@ export function SystemPage() {
   const [requestLogDraft, setRequestLogDraft] = useState(false);
   const [requestLogTouched, setRequestLogTouched] = useState(false);
   const [requestLogSaving, setRequestLogSaving] = useState(false);
-  const [checkingVersion, setCheckingVersion] = useState(false);
+  const [checkingWebuiUpdate, setCheckingWebuiUpdate] = useState(false);
+  const [webuiUpdateModalOpen, setWebuiUpdateModalOpen] = useState(false);
+  const [webuiUpdateDialog, setWebuiUpdateDialog] = useState<WebuiUpdateDialogState | null>(null);
 
   const apiKeysCache = useRef<string[]>([]);
   const versionTapCount = useRef(0);
@@ -282,38 +313,42 @@ export function SystemPage() {
     }
   };
 
-  const handleVersionCheck = useCallback(async () => {
-    setCheckingVersion(true);
+  const handleWebuiUpdate = useCallback(async () => {
+    setCheckingWebuiUpdate(true);
     try {
-      const data = await versionApi.checkLatest();
-      const latestRaw = data?.['latest-version'] ?? data?.latest_version ?? data?.latest ?? '';
-      const latest = typeof latestRaw === 'string' ? latestRaw : String(latestRaw ?? '');
-      const comparison = compareVersions(latest, auth.serverVersion);
-
-      if (!latest) {
-        showNotification(t('system_info.version_check_error'), 'error');
-        return;
+      const response = await managementApi.updateWebui(true);
+      const dialogState = toWebuiUpdateDialogState(response);
+      if (dialogState) {
+        setWebuiUpdateDialog(dialogState);
+        setWebuiUpdateModalOpen(true);
       }
-
-      if (comparison === null) {
-        showNotification(t('system_info.version_current_missing'), 'warning');
-        return;
-      }
-
-      if (comparison > 0) {
-        showNotification(t('system_info.version_update_available', { version: latest }), 'warning');
-      } else {
-        showNotification(t('system_info.version_is_latest'), 'success');
-      }
+      showNotification(
+        response.message,
+        response.updated ? 'success' : response.success ? 'info' : 'warning'
+      );
     } catch (error: unknown) {
+      const apiError = error as ApiError;
+      const dialogState =
+        toWebuiUpdateDialogState(apiError?.details) ??
+        toWebuiUpdateDialogState(apiError?.data) ?? {
+          success: false,
+          updated: false,
+          message: t('system_info.webui_update_failed'),
+          logs: [],
+          error:
+            error instanceof Error ? error.message : typeof error === 'string' ? error : undefined,
+        };
+      setWebuiUpdateDialog(dialogState);
+      setWebuiUpdateModalOpen(true);
+
       const message =
         error instanceof Error ? error.message : typeof error === 'string' ? error : '';
       const suffix = message ? `: ${message}` : '';
-      showNotification(`${t('system_info.version_check_error')}${suffix}`, 'error');
+      showNotification(`${t('system_info.webui_update_failed')}${suffix}`, 'error');
     } finally {
-      setCheckingVersion(false);
+      setCheckingWebuiUpdate(false);
     }
-  }, [auth.serverVersion, showNotification, t]);
+  }, [showNotification, t]);
 
   useEffect(() => {
     fetchConfig().catch(() => {
@@ -345,6 +380,17 @@ export function SystemPage() {
       <h1 className={styles.pageTitle}>{t('system_info.title')}</h1>
       <div className={styles.content}>
         <Card className={styles.aboutCard}>
+          <div className={styles.aboutTopBar}>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => void handleWebuiUpdate()}
+              loading={checkingWebuiUpdate}
+            >
+              {t('system_info.version_check_button')}
+            </Button>
+          </div>
           <div className={styles.aboutHeader}>
             <img src={INLINE_LOGO_JPEG} alt="CPAMC" className={styles.aboutLogo} />
             <div className={styles.aboutTitle}>{t('system_info.about_title')}</div>
@@ -365,24 +411,12 @@ export function SystemPage() {
             <div className={styles.infoTile}>
               <div className={styles.tileHeader}>
                 <div className={styles.tileLabel}>{t('footer.api_version')}</div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className={styles.tileAction}
-                  onClick={() => void handleVersionCheck()}
-                  loading={checkingVersion}
-                  title={t('system_info.version_check_button')}
-                  aria-label={t('system_info.version_check_button')}
-                >
-                  {t('system_info.version_check_button')}
-                </Button>
               </div>
               <div className={styles.tileValue}>{apiVersion}</div>
             </div>
 
             <div className={styles.infoTile}>
-              <div className={styles.tileLabel}>{t('footer.build_date')}</div>
+              <div className={styles.tileLabel}>{t('system_info.webui_build_date')}</div>
               <div className={styles.tileValue}>{buildTime}</div>
             </div>
 
@@ -518,6 +552,88 @@ export function SystemPage() {
           </div>
         </Card>
       </div>
+
+      <Modal
+        open={webuiUpdateModalOpen}
+        onClose={() => setWebuiUpdateModalOpen(false)}
+        title={t('system_info.webui_update_title')}
+        footer={
+          <Button variant="primary" onClick={() => setWebuiUpdateModalOpen(false)}>
+            {t('common.confirm')}
+          </Button>
+        }
+        width={760}
+      >
+        {webuiUpdateDialog && (
+          <div className={styles.updateModalBody}>
+            <div
+              className={`status-badge ${
+                webuiUpdateDialog.success
+                  ? webuiUpdateDialog.updated
+                    ? 'success'
+                    : 'muted'
+                  : 'error'
+              }`}
+            >
+              {webuiUpdateDialog.message}
+            </div>
+
+            <div className={styles.updateMetaGrid}>
+              <div className={styles.updateMetaItem}>
+                <span>{t('system_info.webui_update_started_at')}</span>
+                <strong>
+                  {webuiUpdateDialog.startedAt
+                    ? new Date(webuiUpdateDialog.startedAt).toLocaleString(i18n.language)
+                    : '-'}
+                </strong>
+              </div>
+              <div className={styles.updateMetaItem}>
+                <span>{t('system_info.webui_update_finished_at')}</span>
+                <strong>
+                  {webuiUpdateDialog.finishedAt
+                    ? new Date(webuiUpdateDialog.finishedAt).toLocaleString(i18n.language)
+                    : '-'}
+                </strong>
+              </div>
+              <div className={styles.updateMetaItem}>
+                <span>{t('system_info.webui_update_duration')}</span>
+                <strong>
+                  {typeof webuiUpdateDialog.durationMs === 'number'
+                    ? `${webuiUpdateDialog.durationMs} ms`
+                    : '-'}
+                </strong>
+              </div>
+              <div className={styles.updateMetaItem}>
+                <span>{t('system_info.webui_update_file_path')}</span>
+                <strong title={webuiUpdateDialog.filePath}>{webuiUpdateDialog.filePath || '-'}</strong>
+              </div>
+            </div>
+
+            {webuiUpdateDialog.error && (
+              <div className="error-box">{webuiUpdateDialog.error}</div>
+            )}
+
+            <div className={styles.updateLogsSection}>
+              <div className={styles.updateLogsTitle}>{t('system_info.webui_update_logs')}</div>
+              {webuiUpdateDialog.logs.length === 0 ? (
+                <div className="hint">{t('system_info.webui_update_logs_empty')}</div>
+              ) : (
+                <div className={styles.updateLogsList}>
+                  {webuiUpdateDialog.logs.map((log, index) => (
+                    <div key={`${log.time}-${log.message}-${index}`} className={styles.updateLogItem}>
+                      <span className={styles.updateLogTime}>
+                        {log.time ? new Date(log.time).toLocaleTimeString(i18n.language) : '--:--:--'}
+                      </span>
+                      <span className={styles.updateLogLevel}>{log.level}</span>
+                      <span className={styles.updateLogMessage}>{log.message}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <Modal
         open={requestLogModalOpen}

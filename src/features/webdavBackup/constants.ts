@@ -4,6 +4,7 @@ export const WEBDAV_STORE_KEY = 'cli-proxy-webdav';
 
 export const BACKUP_FILE_PREFIX = 'cpamc-backup-';
 export const BACKUP_FILE_EXT = '.json';
+export const LATEST_LOCAL_BACKUP_PATH = 'cpamc-backup-latest.json';
 
 export const DEFAULT_BASE_PATH = '/cpamc-backups/';
 

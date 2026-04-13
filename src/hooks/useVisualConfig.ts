@@ -149,6 +149,7 @@ export function getVisualConfigValidationErrors(
     requestRetry: getNonNegativeIntegerError(values.requestRetry),
     maxRetryCredentials: getNonNegativeIntegerError(values.maxRetryCredentials),
     maxRetryInterval: getNonNegativeIntegerError(values.maxRetryInterval),
+    upstreamTimeout: getNonNegativeIntegerError(values.upstreamTimeout),
     'streaming.keepaliveSeconds': getNonNegativeIntegerError(values.streaming.keepaliveSeconds),
     'streaming.bootstrapRetries': getNonNegativeIntegerError(values.streaming.bootstrapRetries),
     'streaming.nonstreamKeepaliveInterval': getNonNegativeIntegerError(
@@ -189,7 +190,9 @@ export function getPayloadParamValidationError(
 }
 
 function hasPayloadParamValidationErrors(rules: PayloadRule[]): boolean {
-  return rules.some((rule) => rule.params.some((param) => Boolean(getPayloadParamValidationError(param))));
+  return rules.some((rule) =>
+    rule.params.some((param) => Boolean(getPayloadParamValidationError(param)))
+  );
 }
 
 function deepClone<T>(value: T): T {
@@ -483,14 +486,16 @@ export function useVisualConfig() {
 
         rmAllowRemote: Boolean(remoteManagement?.['allow-remote']),
         rmSecretKey:
-          typeof remoteManagement?.['secret-key'] === 'string' ? remoteManagement['secret-key'] : '',
+          typeof remoteManagement?.['secret-key'] === 'string'
+            ? remoteManagement['secret-key']
+            : '',
         rmDisableControlPanel: Boolean(remoteManagement?.['disable-control-panel']),
         rmPanelRepo:
           typeof remoteManagement?.['panel-github-repository'] === 'string'
             ? remoteManagement['panel-github-repository']
             : typeof remoteManagement?.['panel-repo'] === 'string'
               ? remoteManagement['panel-repo']
-            : '',
+              : '',
 
         authDir: typeof parsed['auth-dir'] === 'string' ? parsed['auth-dir'] : '',
         apiKeysText: resolveApiKeysText(parsed),
@@ -506,15 +511,13 @@ export function useVisualConfig() {
         requestRetry: String(parsed['request-retry'] ?? ''),
         maxRetryCredentials: String(parsed['max-retry-credentials'] ?? ''),
         maxRetryInterval: String(parsed['max-retry-interval'] ?? ''),
+        upstreamTimeout: String(parsed['upstream-timeout'] ?? ''),
         wsAuth: Boolean(parsed['ws-auth']),
 
         quotaSwitchProject: Boolean(quotaExceeded?.['switch-project'] ?? true),
-        quotaSwitchPreviewModel: Boolean(
-          quotaExceeded?.['switch-preview-model'] ?? true
-        ),
+        quotaSwitchPreviewModel: Boolean(quotaExceeded?.['switch-preview-model'] ?? true),
 
-        routingStrategy:
-          routing?.strategy === 'fill-first' ? 'fill-first' : 'round-robin',
+        routingStrategy: routing?.strategy === 'fill-first' ? 'fill-first' : 'round-robin',
 
         payloadDefaultRules: parsePayloadRules(payload?.default),
         payloadDefaultRawRules: parseRawPayloadRules(payload?.['default-raw']),
@@ -612,6 +615,7 @@ export function useVisualConfig() {
         setIntFromStringInDoc(doc, ['request-retry'], values.requestRetry);
         setIntFromStringInDoc(doc, ['max-retry-credentials'], values.maxRetryCredentials);
         setIntFromStringInDoc(doc, ['max-retry-interval'], values.maxRetryInterval);
+        setIntFromStringInDoc(doc, ['upstream-timeout'], values.upstreamTimeout);
         setBooleanInDoc(doc, ['ws-auth'], values.wsAuth);
 
         if (
@@ -621,10 +625,7 @@ export function useVisualConfig() {
         ) {
           ensureMapInDoc(doc, ['quota-exceeded']);
           doc.setIn(['quota-exceeded', 'switch-project'], values.quotaSwitchProject);
-          doc.setIn(
-            ['quota-exceeded', 'switch-preview-model'],
-            values.quotaSwitchPreviewModel
-          );
+          doc.setIn(['quota-exceeded', 'switch-preview-model'], values.quotaSwitchPreviewModel);
           deleteIfMapEmpty(doc, ['quota-exceeded']);
         }
 
@@ -635,9 +636,13 @@ export function useVisualConfig() {
         }
 
         const keepaliveSeconds =
-          typeof values.streaming?.keepaliveSeconds === 'string' ? values.streaming.keepaliveSeconds : '';
+          typeof values.streaming?.keepaliveSeconds === 'string'
+            ? values.streaming.keepaliveSeconds
+            : '';
         const bootstrapRetries =
-          typeof values.streaming?.bootstrapRetries === 'string' ? values.streaming.bootstrapRetries : '';
+          typeof values.streaming?.bootstrapRetries === 'string'
+            ? values.streaming.bootstrapRetries
+            : '';
         const nonstreamKeepaliveInterval =
           typeof values.streaming?.nonstreamKeepaliveInterval === 'string'
             ? values.streaming.nonstreamKeepaliveInterval
@@ -652,11 +657,7 @@ export function useVisualConfig() {
           deleteIfMapEmpty(doc, ['streaming']);
         }
 
-        setIntFromStringInDoc(
-          doc,
-          ['nonstream-keepalive-interval'],
-          nonstreamKeepaliveInterval
-        );
+        setIntFromStringInDoc(doc, ['nonstream-keepalive-interval'], nonstreamKeepaliveInterval);
 
         if (
           docHas(doc, ['payload']) ||

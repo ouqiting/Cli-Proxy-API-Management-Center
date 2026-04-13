@@ -37,6 +37,7 @@ const SECTION_KEYS: RawConfigSection[] = [
   'debug',
   'proxy-url',
   'request-retry',
+  'upstream-timeout',
   'quota-exceeded',
   'usage-statistics-enabled',
   'request-log',
@@ -52,7 +53,7 @@ const SECTION_KEYS: RawConfigSection[] = [
   'claude-api-key',
   'vertex-api-key',
   'openai-compatibility',
-  'oauth-excluded-models'
+  'oauth-excluded-models',
 ];
 
 const extractSectionValue = (config: Config | null, section?: RawConfigSection) => {
@@ -64,6 +65,8 @@ const extractSectionValue = (config: Config | null, section?: RawConfigSection) 
       return config.proxyUrl;
     case 'request-retry':
       return config.requestRetry;
+    case 'upstream-timeout':
+      return config.upstreamTimeout;
     case 'quota-exceeded':
       return config.quotaExceeded;
     case 'usage-statistics-enabled':
@@ -162,17 +165,21 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
       set({
         config: data,
         cache: newCache,
-        loading: false
+        loading: false,
       });
 
       return section ? extractSectionValue(data, section) : data;
     } catch (error: unknown) {
       const message =
-        error instanceof Error ? error.message : typeof error === 'string' ? error : 'Failed to fetch config';
+        error instanceof Error
+          ? error.message
+          : typeof error === 'string'
+            ? error
+            : 'Failed to fetch config';
       if (requestId === configRequestToken) {
         set({
           error: message || 'Failed to fetch config',
-          loading: false
+          loading: false,
         });
       }
       throw error;
@@ -198,6 +205,9 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
           break;
         case 'request-retry':
           nextConfig.requestRetry = value as Config['requestRetry'];
+          break;
+        case 'upstream-timeout':
+          nextConfig.upstreamTimeout = value as Config['upstreamTimeout'];
           break;
         case 'quota-exceeded':
           nextConfig.quotaExceeded = value as Config['quotaExceeded'];
@@ -288,5 +298,5 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
     if (!cached) return false;
 
     return Date.now() - cached.timestamp < CACHE_EXPIRY_MS;
-  }
+  },
 }));

@@ -64,14 +64,14 @@ export function RestoreCard() {
   }, []);
 
   const handleDelete = useCallback(
-    (filename: string) => {
+    (filename: string, syncLatestLocal: boolean) => {
       showConfirmation({
         title: t('backup.delete_confirm_title'),
         message: t('backup.delete_confirm_message', { name: filename }),
         confirmText: t('common.delete'),
         variant: 'danger',
         onConfirm: async () => {
-          await deleteRemote(filename);
+          await deleteRemote(filename, syncLatestLocal);
           await refresh();
         },
       });
@@ -138,7 +138,7 @@ export function RestoreCard() {
             <EmptyState title={t('backup.no_backups')} />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {files.map((file) => (
+              {files.map((file, index) => (
                 <div
                   key={file.href}
                   style={{
@@ -190,7 +190,7 @@ export function RestoreCard() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => handleDelete(file.displayName)}
+                      onClick={() => handleDelete(file.displayName, index === 0)}
                     >
                       {t('common.delete')}
                     </Button>

@@ -64,6 +64,16 @@ export interface UsageDetail {
     cached_tokens: number;
     total_tokens: number;
   };
+  request_id?: string;
+  method?: string;
+  path?: string;
+  status_code?: number;
+  upstream_status_code?: number;
+  error_stage?: string;
+  error_code?: string;
+  error_message?: string;
+  upstream_error_message?: string;
+  latency_ms?: number;
 }
 
 export interface UsageData {

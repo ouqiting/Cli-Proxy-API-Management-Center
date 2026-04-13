@@ -38,7 +38,7 @@ export interface ModelPrice {
 export interface UsageDetail {
   timestamp: string;
   source: string;
-  auth_index: number;
+  auth_index?: string | number | null;
   tokens: {
     input_tokens: number;
     output_tokens: number;
@@ -48,6 +48,16 @@ export interface UsageDetail {
     total_tokens: number;
   };
   failed: boolean;
+  request_id?: string;
+  method?: string;
+  path?: string;
+  status_code?: number;
+  upstream_status_code?: number;
+  error_stage?: string;
+  error_code?: string;
+  error_message?: string;
+  upstream_error_message?: string;
+  latency_ms?: number;
   __modelName?: string;
   __timestampMs?: number;
 }
@@ -82,6 +92,11 @@ const USAGE_TIME_RANGE_MS: Record<Exclude<UsageTimeRange, 'all'>, number> = {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
+
+const toOptionalNumber = (value: unknown): number | undefined => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
 
 const getApisRecord = (usageData: unknown): Record<string, unknown> | null => {
   const usageRecord = isRecord(usageData) ? usageData : null;
@@ -500,9 +515,22 @@ export function collectUsageDetails(usageData: unknown): UsageDetail[] {
         details.push({
           timestamp,
           source: normalizeSource(detailRaw.source),
-          auth_index: detailRaw.auth_index as unknown as number,
+          auth_index: detailRaw.auth_index as UsageDetail['auth_index'],
           tokens: tokensRaw as unknown as UsageDetail['tokens'],
           failed: detailRaw.failed === true,
+          request_id: typeof detailRaw.request_id === 'string' ? detailRaw.request_id : undefined,
+          method: typeof detailRaw.method === 'string' ? detailRaw.method : undefined,
+          path: typeof detailRaw.path === 'string' ? detailRaw.path : undefined,
+          status_code: toOptionalNumber(detailRaw.status_code),
+          upstream_status_code: toOptionalNumber(detailRaw.upstream_status_code),
+          error_stage: typeof detailRaw.error_stage === 'string' ? detailRaw.error_stage : undefined,
+          error_code: typeof detailRaw.error_code === 'string' ? detailRaw.error_code : undefined,
+          error_message: typeof detailRaw.error_message === 'string' ? detailRaw.error_message : undefined,
+          upstream_error_message:
+            typeof detailRaw.upstream_error_message === 'string'
+              ? detailRaw.upstream_error_message
+              : undefined,
+          latency_ms: toOptionalNumber(detailRaw.latency_ms),
           __modelName: modelName,
           __timestampMs: Number.isNaN(timestampMs) ? 0 : timestampMs,
         });
@@ -571,9 +599,22 @@ export function collectUsageDetailsWithEndpoint(usageData: unknown): UsageDetail
         details.push({
           timestamp,
           source: normalizeSource(detailRaw.source),
-          auth_index: detailRaw.auth_index as unknown as number,
+          auth_index: detailRaw.auth_index as UsageDetail['auth_index'],
           tokens: tokensRaw as unknown as UsageDetail['tokens'],
           failed: detailRaw.failed === true,
+          request_id: typeof detailRaw.request_id === 'string' ? detailRaw.request_id : undefined,
+          method: typeof detailRaw.method === 'string' ? detailRaw.method : undefined,
+          path: typeof detailRaw.path === 'string' ? detailRaw.path : undefined,
+          status_code: toOptionalNumber(detailRaw.status_code),
+          upstream_status_code: toOptionalNumber(detailRaw.upstream_status_code),
+          error_stage: typeof detailRaw.error_stage === 'string' ? detailRaw.error_stage : undefined,
+          error_code: typeof detailRaw.error_code === 'string' ? detailRaw.error_code : undefined,
+          error_message: typeof detailRaw.error_message === 'string' ? detailRaw.error_message : undefined,
+          upstream_error_message:
+            typeof detailRaw.upstream_error_message === 'string'
+              ? detailRaw.upstream_error_message
+              : undefined,
+          latency_ms: toOptionalNumber(detailRaw.latency_ms),
           __modelName: modelName,
           __endpoint: endpoint,
           __endpointMethod: endpointMethod,
@@ -1268,7 +1309,7 @@ export interface StatusBarData {
 export function calculateStatusBarData(
   usageDetails: UsageDetail[],
   sourceFilter?: string,
-  authIndexFilter?: number
+  authIndexFilter?: string | number
 ): StatusBarData {
   const BLOCK_COUNT = 20;
   const BLOCK_DURATION_MS = 10 * 60 * 1000; // 10 minutes
@@ -1298,7 +1339,10 @@ export function calculateStatusBarData(
     if (sourceFilter !== undefined && detail.source !== sourceFilter) {
       return;
     }
-    if (authIndexFilter !== undefined && detail.auth_index !== authIndexFilter) {
+    if (
+      authIndexFilter !== undefined &&
+      normalizeAuthIndex(detail.auth_index) !== normalizeAuthIndex(authIndexFilter)
+    ) {
       return;
     }
 

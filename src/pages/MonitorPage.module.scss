@@ -590,7 +590,7 @@
 // 虚拟滚动表格固定列宽
 .virtualTable {
   table-layout: fixed;
-  min-width: 1280px;
+  min-width: 1500px;
 
   th, td {
     overflow: hidden;
@@ -610,22 +610,24 @@
   th:nth-child(5), td:nth-child(5) { width: 200px; }
   // 状态
   th:nth-child(6), td:nth-child(6) { width: 60px; }
+  // 状态码
+  th:nth-child(7), td:nth-child(7) { width: 120px; }
   // 最近请求状态
-  th:nth-child(7), td:nth-child(7) { width: 100px; }
+  th:nth-child(8), td:nth-child(8) { width: 100px; }
   // 成功率
-  th:nth-child(8), td:nth-child(8) { width: 70px; }
-  // 请求数
   th:nth-child(9), td:nth-child(9) { width: 70px; }
+  // 请求数
+  th:nth-child(10), td:nth-child(10) { width: 70px; }
   // 输入
-  th:nth-child(10), td:nth-child(10) { width: 60px; }
-  // 输出
   th:nth-child(11), td:nth-child(11) { width: 60px; }
+  // 输出
+  th:nth-child(12), td:nth-child(12) { width: 60px; }
   // 总 Token
-  th:nth-child(12), td:nth-child(12) { width: 70px; }
+  th:nth-child(13), td:nth-child(13) { width: 70px; }
   // 时间
-  th:nth-child(13), td:nth-child(13) { width: 150px; }
+  th:nth-child(14), td:nth-child(14) { width: 150px; }
   // 操作
-  th:nth-child(14), td:nth-child(14) { width: 60px; }
+  th:nth-child(15), td:nth-child(15) { width: 160px; }
 }
 
 .table {
@@ -752,6 +754,28 @@
     background: rgba(239, 68, 68, 0.15);
     color: var(--danger-color, #ef4444);
   }
+}
+
+.logStatusCodes {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.logStatusBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: $radius-full;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.logStatusBadge {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
 }
 
 // 成功率颜色
@@ -936,6 +960,13 @@
   }
 }
 
+.rowActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 // 禁用按钮
 .disableBtn {
   padding: 4px 10px;
@@ -1012,6 +1043,68 @@
 .expandHeader {
   margin-bottom: 8px;
   color: var(--text-secondary);
+}
+
+.requestDetailPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.requestDetailGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+
+  @include mobile {
+    grid-template-columns: 1fr;
+  }
+}
+
+.requestDetailItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.requestDetailLabel {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.requestDetailValue {
+  font-size: 13px;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.requestDetailSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.requestDetailSectionTitle {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 700;
+}
+
+.requestDetailPre {
+  margin: 0;
+  padding: 12px;
+  border-radius: $radius-md;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow: auto;
 }
 
 // 时间范围选择器

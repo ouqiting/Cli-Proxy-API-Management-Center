@@ -170,6 +170,18 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
 
   const { quota, loadQuota } = useQuotaLoader(config);
 
+  const handleRefreshSingleQuota = useCallback(
+    (item: AuthFileItem) => {
+      if (disabled || loading || sectionLoading) {
+        return;
+      }
+      void loadQuota([item], 'page', () => {
+        // Single-card refresh should not toggle section-level loading UI.
+      });
+    },
+    [disabled, loadQuota, loading, sectionLoading]
+  );
+
   const pendingQuotaRefreshRef = useRef(false);
   const prevFilesLoadingRef = useRef(loading);
 
@@ -291,20 +303,43 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
       ) : (
         <>
           <div ref={gridRef} className={config.gridClassName}>
-            {pageItems.map((item) => (
-              <QuotaCard
-                key={item.name}
-                item={item}
-                quota={quota[item.name]}
-                resolvedTheme={resolvedTheme}
-                i18nPrefix={config.i18nPrefix}
-                cardIdleMessageKey={config.cardIdleMessageKey}
-                cardClassName={config.cardClassName}
-                defaultType={config.type}
-                renderQuotaItems={config.renderQuotaItems}
-                cardAction={renderCardAction?.(item)}
-              />
-            ))}
+            {pageItems.map((item) => {
+              const quotaState = quota[item.name] as QuotaStatusState | undefined;
+              const singleRefreshing = quotaState?.status === 'loading';
+              const singleRefreshButton = (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => handleRefreshSingleQuota(item)}
+                  disabled={disabled || loading || sectionLoading || singleRefreshing}
+                  loading={singleRefreshing}
+                  title={t('quota_management.refresh_single_quota')}
+                  aria-label={t('quota_management.refresh_single_quota')}
+                >
+                  {!singleRefreshing && <IconRefreshCw size={16} />}
+                </Button>
+              );
+
+              return (
+                <QuotaCard
+                  key={item.name}
+                  item={item}
+                  quota={quota[item.name]}
+                  resolvedTheme={resolvedTheme}
+                  i18nPrefix={config.i18nPrefix}
+                  cardIdleMessageKey={config.cardIdleMessageKey}
+                  cardClassName={config.cardClassName}
+                  defaultType={config.type}
+                  renderQuotaItems={config.renderQuotaItems}
+                  cardAction={
+                    <div className={styles.cardActionGroup}>
+                      {singleRefreshButton}
+                      {renderCardAction?.(item)}
+                    </div>
+                  }
+                />
+              );
+            })}
           </div>
           {filteredFiles.length > pageSize && effectiveViewMode === 'paged' && (
             <div className={styles.pagination}>

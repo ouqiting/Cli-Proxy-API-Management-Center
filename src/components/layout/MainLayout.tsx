@@ -35,7 +35,9 @@ import {
 import { triggerHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { LANGUAGE_LABEL_KEYS, LANGUAGE_ORDER } from '@/utils/constants';
 import { isSupportedLanguage } from '@/utils/language';
+import { managementApi } from '@/services/api';
 import { useAutoBackup } from '@/features/webdavBackup/hooks/useAutoBackup';
+import { useBackupActions } from '@/features/webdavBackup/hooks/useBackupActions';
 import { useWebdavStore } from '@/features/webdavBackup/store/useWebdavStore';
 import type { Theme } from '@/types';
 
@@ -173,6 +175,12 @@ const headerIcons = {
       <path d="M21 12H9" />
     </svg>
   ),
+  power: (
+    <svg {...headerIconProps}>
+      <path d="M12 2v10" />
+      <path d="M18.4 6.6a9 9 0 1 1-12.8 0" />
+    </svg>
+  ),
 };
 
 const THEME_CARDS: Array<{
@@ -228,13 +236,16 @@ const THEME_CARDS: Array<{
 
 export function MainLayout() {
   const { t } = useTranslation();
-  const { showNotification } = useNotificationStore();
+  const { showNotification, showConfirmation } = useNotificationStore();
   const location = useLocation();
 
   const apiBase = useAuthStore((state) => state.apiBase);
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
+  const updateConnectionStatus = useAuthStore((state) => state.updateConnectionStatus);
   const logout = useAuthStore((state) => state.logout);
   const hydrateWebdavSettings = useWebdavStore((state) => state.hydrateFromConfig);
+  const isBackingUp = useWebdavStore((state) => state.isBackingUp);
+  const { backupOrThrow } = useBackupActions();
 
   // 全局自动备份：只要管理中心打开即生效，无需停留在备份页面
   useAutoBackup();
@@ -253,11 +264,13 @@ export function MainLayout() {
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [brandExpanded, setBrandExpanded] = useState(true);
+  const [isRestartingService, setIsRestartingService] = useState(false);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const languageMenuRef = useRef<HTMLDivElement | null>(null);
   const themeMenuRef = useRef<HTMLDivElement | null>(null);
   const brandCollapseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const headerRef = useRef<HTMLElement | null>(null);
+  const restartPollTokenRef = useRef(0);
 
   const fullBrandName = 'CLI Proxy API Management Center Ouqiting';
   const abbrBrandName = t('title.abbr');
@@ -388,6 +401,12 @@ export function MainLayout() {
       document.removeEventListener('keydown', handleEscape);
     };
   }, [themeMenuOpen]);
+
+  useEffect(() => {
+    return () => {
+      restartPollTokenRef.current += 1;
+    };
+  }, []);
 
   const handleBrandClick = useCallback(() => {
     if (!brandExpanded) {
@@ -544,6 +563,99 @@ export function MainLayout() {
     showNotification(t('notification.data_refreshed'), 'success');
   };
 
+  const pollUntilServiceRecovered = useCallback(
+    (pollToken: number) => {
+      void (async () => {
+        for (let attempt = 0; attempt < 30; attempt += 1) {
+          const delay = attempt === 0 ? 1500 : 2000;
+          await new Promise<void>((resolve) => {
+            window.setTimeout(resolve, delay);
+          });
+
+          if (restartPollTokenRef.current !== pollToken) {
+            return;
+          }
+
+          try {
+            clearCache();
+            await fetchConfig(undefined, true);
+            updateConnectionStatus('connected');
+            await Promise.allSettled([triggerHeaderRefresh()]);
+
+            if (restartPollTokenRef.current !== pollToken) {
+              return;
+            }
+
+            setIsRestartingService(false);
+            restartPollTokenRef.current = 0;
+            showNotification(t('header.restart_restored'), 'success');
+            return;
+          } catch {
+            updateConnectionStatus('connecting');
+          }
+        }
+
+        if (restartPollTokenRef.current !== pollToken) {
+          return;
+        }
+
+        setIsRestartingService(false);
+        updateConnectionStatus('error', t('header.restart_recovery_timeout'));
+        restartPollTokenRef.current = 0;
+        showNotification(t('header.restart_recovery_timeout'), 'warning');
+      })();
+    },
+    [clearCache, fetchConfig, showNotification, t, updateConnectionStatus]
+  );
+
+  const handleRestartService = useCallback(() => {
+    showConfirmation({
+      title: t('header.restart_confirm_title'),
+      message: t('header.restart_confirm_message'),
+      confirmText: t('header.restart_confirm_button'),
+      cancelText: t('common.cancel'),
+      variant: 'danger',
+      onConfirm: async () => {
+        await backupOrThrow();
+
+        setIsRestartingService(true);
+        updateConnectionStatus('connecting');
+
+        try {
+          const response = await managementApi.restartSystem();
+          if (!response?.accepted) {
+            throw new Error(response?.message || t('header.restart_failed'));
+          }
+
+          showNotification(t('header.restart_started'), 'warning');
+          clearCache();
+
+          const pollToken = Date.now();
+          restartPollTokenRef.current = pollToken;
+          pollUntilServiceRecovered(pollToken);
+        } catch (error) {
+          setIsRestartingService(false);
+          updateConnectionStatus('error');
+          const message =
+            error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+          showNotification(
+            `${t('header.restart_failed')}${message ? `: ${message}` : ''}`,
+            'error'
+          );
+          throw error;
+        }
+      },
+    });
+  }, [
+    backupOrThrow,
+    clearCache,
+    pollUntilServiceRecovered,
+    showConfirmation,
+    showNotification,
+    t,
+    updateConnectionStatus,
+  ]);
+
   return (
     <div className="app-shell">
       <header className="main-header" ref={headerRef}>
@@ -598,8 +710,21 @@ export function MainLayout() {
               size="sm"
               onClick={handleRefreshAll}
               title={t('header.refresh_all')}
+              disabled={isRestartingService}
             >
               {headerIcons.refresh}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="header-restart-btn"
+              onClick={handleRestartService}
+              title={t('header.restart_service')}
+              aria-label={t('header.restart_service')}
+              loading={isRestartingService}
+              disabled={connectionStatus !== 'connected' || isBackingUp}
+            >
+              {headerIcons.power}
             </Button>
             <div
               className={`language-menu ${languageMenuOpen ? 'open' : ''}`}

@@ -197,6 +197,11 @@
     gap: $spacing-xs;
     flex-shrink: 0;
 
+    .header-restart-btn {
+      min-width: 36px;
+      padding-inline: 10px;
+    }
+
     .language-menu {
       position: relative;
       display: inline-flex;

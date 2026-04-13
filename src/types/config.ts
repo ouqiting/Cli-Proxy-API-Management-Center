@@ -15,6 +15,7 @@ export interface Config {
   debug?: boolean;
   proxyUrl?: string;
   requestRetry?: number;
+  upstreamTimeout?: number;
   quotaExceeded?: QuotaExceededConfig;
   usageStatisticsEnabled?: boolean;
   requestLog?: boolean;
@@ -38,6 +39,7 @@ export type RawConfigSection =
   | 'debug'
   | 'proxy-url'
   | 'request-retry'
+  | 'upstream-timeout'
   | 'quota-exceeded'
   | 'usage-statistics-enabled'
   | 'request-log'

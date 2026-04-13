@@ -14,3 +14,5 @@ export * from './models';
 export * from './transformers';
 export * from './vertex';
 export * from './credentialDisable';
+export * from './webuiData';
+export * from './management';

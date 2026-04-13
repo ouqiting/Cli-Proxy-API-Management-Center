@@ -13,6 +13,9 @@ export interface BackupData {
     rememberPassword: boolean;
   };
   usage?: Record<string, unknown>;
+  webuiData?: {
+    quotaSnapshot?: string;
+  };
 }
 
 export interface BackupPayload {

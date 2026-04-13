@@ -2,10 +2,13 @@ import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Card } from '@/components/ui/Card';
+import { Modal } from '@/components/ui/Modal';
 import { usageApi, authFilesApi } from '@/services/api';
+import { logsApi, type RequestLogDetailResponse } from '@/services/api/logs';
 import { useDisableModel } from '@/hooks';
 import { normalizeUsageSourceId, normalizeAuthIndex } from '@/utils/usage';
 import { resolveSourceDisplay } from '@/utils/sourceResolver';
+import type { ApiError } from '@/types';
 import type { SourceInfo, CredentialInfo } from '@/types/sourceInfo';
 import { TimeRangeSelector, formatTimeRangeCaption, type TimeRange } from './TimeRangeSelector';
 import { DisableModelModal } from './DisableModelModal';
@@ -43,6 +46,16 @@ interface LogEntry {
   providerType: string;
   maskedKey: string;
   failed: boolean;
+  requestId?: string;
+  method?: string;
+  path?: string;
+  statusCode?: number;
+  upstreamStatusCode?: number;
+  errorStage?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  upstreamErrorMessage?: string;
+  latencyMs?: number;
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
@@ -63,6 +76,27 @@ interface PrecomputedStats {
 
 // 虚拟滚动行高
 const ROW_HEIGHT = 40;
+
+const stringifyData = (value: unknown): string => {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+};
+
+const getErrorMessage = (err: unknown): string => {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  if (typeof err !== 'object' || err === null || !('message' in err)) return '';
+  const message = (err as { message?: unknown }).message;
+  return typeof message === 'string' ? message : '';
+};
+
+const getDisplayStatusCode = (statusCode?: number, upstreamStatusCode?: number): number | undefined =>
+  upstreamStatusCode ?? statusCode;
 
 export function RequestLogs({ data, loading: parentLoading, providerMap, providerTypeMap, sourceInfoMap, authFileMap: propAuthFileMap, apiFilter }: RequestLogsProps) {
   const { t } = useTranslation();
@@ -97,6 +131,11 @@ export function RequestLogs({ data, loading: parentLoading, providerMap, provide
   const [logData, setLogData] = useState<UsageData | null>(null);
   const [logLoading, setLogLoading] = useState(false);
   const [isFirstLoad, setIsFirstLoad] = useState(true);
+  const [detailEntry, setDetailEntry] = useState<LogEntry | null>(null);
+  const [detailData, setDetailData] = useState<RequestLogDetailResponse | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState('');
+  const detailRequestSequenceRef = useRef(0);
 
   // 认证文件映射（优先使用 prop，否则自行加载）
   const [localAuthFileMap, setLocalAuthFileMap] = useState<Map<string, CredentialInfo>>(new Map());
@@ -279,6 +318,16 @@ export function RequestLogs({ data, loading: parentLoading, providerMap, provide
             providerType,
             maskedKey: masked,
             failed: detail.failed,
+            requestId: detail.request_id,
+            method: detail.method,
+            path: detail.path,
+            statusCode: detail.status_code,
+            upstreamStatusCode: detail.upstream_status_code,
+            errorStage: detail.error_stage,
+            errorCode: detail.error_code,
+            errorMessage: detail.error_message,
+            upstreamErrorMessage: detail.upstream_error_message,
+            latencyMs: detail.latency_ms,
             inputTokens: detail.tokens.input_tokens || 0,
             outputTokens: detail.tokens.output_tokens || 0,
             totalTokens: detail.tokens.total_tokens || 0,
@@ -404,6 +453,46 @@ export function RequestLogs({ data, loading: parentLoading, providerMap, provide
     };
   };
 
+  const closeDetail = useCallback(() => {
+    detailRequestSequenceRef.current += 1;
+    setDetailEntry(null);
+    setDetailData(null);
+    setDetailError('');
+    setDetailLoading(false);
+  }, []);
+
+  const openDetail = useCallback(async (entry: LogEntry) => {
+    const requestSequence = detailRequestSequenceRef.current + 1;
+    detailRequestSequenceRef.current = requestSequence;
+    setDetailEntry(entry);
+    setDetailData(null);
+    setDetailError('');
+
+    if (!entry.requestId) {
+      return;
+    }
+
+    setDetailLoading(true);
+    try {
+      const response = await logsApi.fetchRequestLogDetail(entry.requestId);
+      if (detailRequestSequenceRef.current !== requestSequence) {
+        return;
+      }
+      setDetailData(response);
+    } catch (err: unknown) {
+      if (detailRequestSequenceRef.current !== requestSequence) {
+        return;
+      }
+      if ((err as ApiError).status !== 404) {
+        setDetailError(getErrorMessage(err) || t('monitor.logs.detail_error'));
+      }
+    } finally {
+      if (detailRequestSequenceRef.current === requestSequence) {
+        setDetailLoading(false);
+      }
+    }
+  }, [t]);
+
   // 渲染单行
   const renderRow = (entry: LogEntry) => {
     const stats = getStats(entry);
@@ -446,6 +535,17 @@ export function RequestLogs({ data, loading: parentLoading, providerMap, provide
           </span>
         </td>
         <td>
+          <div className={styles.logStatusCodes}>
+            {typeof getDisplayStatusCode(entry.statusCode, entry.upstreamStatusCode) === 'number' ? (
+              <span className={styles.logStatusBadge}>
+                {getDisplayStatusCode(entry.statusCode, entry.upstreamStatusCode)}
+              </span>
+            ) : (
+              '-'
+            )}
+          </div>
+        </td>
+        <td>
           <div className={styles.statusBars}>
             {stats.recentRequests.map((req, idx) => (
               <div
@@ -464,23 +564,36 @@ export function RequestLogs({ data, loading: parentLoading, providerMap, provide
         <td>{formatNumber(entry.totalTokens)}</td>
         <td>{formatTimestamp(entry.timestamp)}</td>
         <td>
-          {canToggle ? (
-            disabled ? (
-              <span className={styles.disabledLabel}>
-                {t('monitor.logs.disabled', { defaultValue: '已禁用' })}
-              </span>
-            ) : (
+          <div className={styles.rowActions}>
+            {entry.failed && (
               <button
-                className={`${styles.disableBtn} btn btn-secondary btn-sm`}
-                title={t('monitor.logs.disable', { defaultValue: '禁用' })}
-                onClick={() => handleDisableClick(locator)}
+                className={`${styles.detailBtn} btn btn-secondary btn-sm`}
+                title={t('common.details')}
+                onClick={() => {
+                  void openDetail(entry);
+                }}
               >
-                {t('monitor.logs.disable')}
+                {t('common.details')}
               </button>
-            )
-          ) : (
-            '-'
-          )}
+            )}
+            {canToggle ? (
+              disabled ? (
+                <span className={styles.disabledLabel}>
+                  {t('monitor.logs.disabled', { defaultValue: '已禁用' })}
+                </span>
+              ) : (
+                <button
+                  className={`${styles.disableBtn} btn btn-secondary btn-sm`}
+                  title={t('monitor.logs.disable', { defaultValue: '禁用' })}
+                  onClick={() => handleDisableClick(locator)}
+                >
+                  {t('monitor.logs.disable')}
+                </button>
+              )
+            ) : (
+              !entry.failed && '-'
+            )}
+          </div>
         </td>
       </>
     );
@@ -597,6 +710,7 @@ export function RequestLogs({ data, loading: parentLoading, providerMap, provide
                       <th>{t('monitor.logs.header_model')}</th>
                       <th>{t('monitor.logs.header_source')}</th>
                       <th>{t('monitor.logs.header_status')}</th>
+                      <th>{t('monitor.logs.header_status_codes')}</th>
                       <th>{t('monitor.logs.header_recent')}</th>
                       <th>{t('monitor.logs.header_rate')}</th>
                       <th>{t('monitor.logs.header_count')}</th>
@@ -673,6 +787,96 @@ export function RequestLogs({ data, loading: parentLoading, providerMap, provide
         onConfirm={handleConfirmDisable}
         onCancel={handleCancelDisable}
       />
+
+      <Modal
+        open={detailEntry !== null}
+        onClose={closeDetail}
+        title={detailEntry ? `${t('monitor.logs.detail_title')} · ${detailEntry.model}` : ''}
+        width={760}
+      >
+        {detailEntry && (
+          <div className={styles.requestDetailPanel}>
+            <div className={styles.requestDetailGrid}>
+              <div className={styles.requestDetailItem}>
+                <span className={styles.requestDetailLabel}>{t('monitor.logs.detail_request_id')}</span>
+                <span className={styles.requestDetailValue}>{detailEntry.requestId || '-'}</span>
+              </div>
+              <div className={styles.requestDetailItem}>
+                <span className={styles.requestDetailLabel}>{t('monitor.logs.detail_method')}</span>
+                <span className={styles.requestDetailValue}>
+                  {detailData?.method || detailEntry.method || '-'}
+                </span>
+              </div>
+              <div className={styles.requestDetailItem}>
+                <span className={styles.requestDetailLabel}>{t('monitor.logs.detail_path')}</span>
+                <span className={styles.requestDetailValue}>
+                  {detailData?.path || detailEntry.path || '-'}
+                </span>
+              </div>
+              <div className={styles.requestDetailItem}>
+                <span className={styles.requestDetailLabel}>{t('monitor.logs.header_status_codes')}</span>
+                <span className={styles.requestDetailValue}>
+                  {getDisplayStatusCode(
+                    detailData?.status_code ?? detailEntry.statusCode,
+                    detailData?.upstream_status_code ?? detailEntry.upstreamStatusCode
+                  ) ?? '-'}
+                </span>
+              </div>
+              <div className={styles.requestDetailItem}>
+                <span className={styles.requestDetailLabel}>{t('monitor.logs.detail_latency')}</span>
+                <span className={styles.requestDetailValue}>
+                  {detailData?.latency_ms ?? detailEntry.latencyMs ?? '-'}
+                </span>
+              </div>
+              <div className={styles.requestDetailItem}>
+                <span className={styles.requestDetailLabel}>{t('monitor.logs.detail_error_stage')}</span>
+                <span className={styles.requestDetailValue}>
+                  {detailData?.error?.stage || detailEntry.errorStage || '-'}
+                </span>
+              </div>
+              <div className={styles.requestDetailItem}>
+                <span className={styles.requestDetailLabel}>{t('monitor.logs.detail_error_code')}</span>
+                <span className={styles.requestDetailValue}>
+                  {detailData?.error?.code || detailEntry.errorCode || '-'}
+                </span>
+              </div>
+            </div>
+
+            {detailLoading && <div className={styles.emptyState}>{t('monitor.logs.detail_loading')}</div>}
+            {!detailLoading && detailError && <div className="error-box">{detailError}</div>}
+
+            {(detailData?.error || detailEntry.errorMessage || detailEntry.upstreamErrorMessage) && (
+              <div className={styles.requestDetailSection}>
+                <div className={styles.requestDetailSectionTitle}>{t('monitor.logs.header_error')}</div>
+                <pre className={styles.requestDetailPre}>
+                  {detailData?.error?.message ||
+                    detailData?.error?.upstream_message ||
+                    detailEntry.errorMessage ||
+                    detailEntry.upstreamErrorMessage ||
+                    '-'}
+                </pre>
+              </div>
+            )}
+
+            {(detailData?.upstream?.body_json !== undefined ||
+              detailData?.upstream?.body_text !== undefined) && (
+              <div className={styles.requestDetailSection}>
+                <div className={styles.requestDetailSectionTitle}>
+                  {t('monitor.logs.detail_upstream_body')}
+                </div>
+                {detailData?.upstream?.body_json !== undefined && (
+                  <pre className={styles.requestDetailPre}>
+                    {stringifyData(detailData.upstream.body_json)}
+                  </pre>
+                )}
+                {detailData?.upstream?.body_json === undefined && detailData?.upstream?.body_text && (
+                  <pre className={styles.requestDetailPre}>{detailData.upstream.body_text}</pre>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
     </>
   );
 }

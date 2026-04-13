@@ -204,6 +204,7 @@ export function VisualConfigEditor({
   const requestRetryError = getValidationMessage(t, validationErrors?.requestRetry);
   const maxRetryCredentialsError = getValidationMessage(t, validationErrors?.maxRetryCredentials);
   const maxRetryIntervalError = getValidationMessage(t, validationErrors?.maxRetryInterval);
+  const upstreamTimeoutError = getValidationMessage(t, validationErrors?.upstreamTimeout);
   const keepaliveError = getValidationMessage(t, validationErrors?.['streaming.keepaliveSeconds']);
   const bootstrapRetriesError = getValidationMessage(
     t,
@@ -287,7 +288,12 @@ export function VisualConfigEditor({
         title: t('config_management.visual.sections.network.title'),
         description: t('config_management.visual.sections.network.description'),
         icon: IconTrendingUp,
-        errorCount: countErrors(['requestRetry', 'maxRetryCredentials', 'maxRetryInterval']),
+        errorCount: countErrors([
+          'requestRetry',
+          'maxRetryCredentials',
+          'maxRetryInterval',
+          'upstreamTimeout',
+        ]),
       },
       {
         id: 'quota',
@@ -405,7 +411,8 @@ export function VisualConfigEditor({
         220
       );
       const maxHeight = Math.max(window.innerHeight - top - viewportPadding, 160);
-      const isVisible = workspaceRect.bottom > stickyTop + 24 && anchorRect.top < window.innerHeight;
+      const isVisible =
+        workspaceRect.bottom > stickyTop + 24 && anchorRect.top < window.innerHeight;
 
       floatingElement.style.setProperty('--visual-config-floating-left', `${left}px`);
       floatingElement.style.setProperty('--visual-config-floating-top', `${top}px`);
@@ -816,6 +823,17 @@ export function VisualConfigEditor({
                     }
                   />
                 </FieldShell>
+                <Input
+                  label={t('config_management.visual.sections.network.upstream_timeout')}
+                  type="number"
+                  min={0}
+                  step={1}
+                  placeholder="300"
+                  value={values.upstreamTimeout}
+                  onChange={(e) => onChange({ upstreamTimeout: e.target.value })}
+                  disabled={disabled}
+                  error={upstreamTimeoutError}
+                />
               </SectionGrid>
 
               <SectionGrid>
