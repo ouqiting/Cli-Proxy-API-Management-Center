@@ -15,6 +15,7 @@ import {
 } from '@/features/authFiles/constants';
 
 export type PrefixProxyEditorField =
+  | 'fileName'
   | 'prefix'
   | 'proxyUrl'
   | 'priority'
@@ -26,7 +27,9 @@ export type PrefixProxyEditorField =
 export type PrefixProxyEditorFieldValue = string | boolean;
 
 export type PrefixProxyEditorState = {
+  originalFileName: string;
   fileName: string;
+  fileNameError: string | null;
   fileInfoText: string;
   isCodexFile: boolean;
   loading: boolean;
@@ -62,6 +65,22 @@ export type UseAuthFilesPrefixProxyEditorResult = {
     value: PrefixProxyEditorFieldValue
   ) => void;
   handlePrefixProxySave: () => Promise<void>;
+};
+
+const normalizeEditorFileName = (value: string): string => value.trim();
+
+const getEditorFileNameError = (
+  value: string,
+  t: ReturnType<typeof useTranslation>['t']
+): string | null => {
+  const normalized = normalizeEditorFileName(value);
+  if (!normalized) {
+    return t('auth_files.file_name_required');
+  }
+  if (!normalized.toLowerCase().endsWith('.json')) {
+    return t('auth_files.file_name_json_required');
+  }
+  return null;
 };
 
 const buildPrefixProxyUpdatedText = (editor: PrefixProxyEditorState | null): string => {
@@ -119,10 +138,12 @@ export function useAuthFilesPrefixProxyEditor(
   const [prefixProxyEditor, setPrefixProxyEditor] = useState<PrefixProxyEditorState | null>(null);
 
   const prefixProxyUpdatedText = buildPrefixProxyUpdatedText(prefixProxyEditor);
+  const normalizedEditorFileName = normalizeEditorFileName(prefixProxyEditor?.fileName ?? '');
   const prefixProxyDirty =
-    Boolean(prefixProxyEditor?.json) &&
-    Boolean(prefixProxyEditor?.originalText) &&
-    prefixProxyUpdatedText !== prefixProxyEditor?.originalText;
+    Boolean(prefixProxyEditor) &&
+    (normalizedEditorFileName !== (prefixProxyEditor?.originalFileName ?? '') ||
+      (Boolean(prefixProxyEditor?.json) &&
+        prefixProxyUpdatedText !== prefixProxyEditor?.originalText));
 
   const closePrefixProxyEditor = () => {
     setPrefixProxyEditor(null);
@@ -139,13 +160,15 @@ export function useAuthFilesPrefixProxyEditor(
     const isCodexFile = normalizedType === 'codex' || normalizedProvider === 'codex';
 
     if (disableControls) return;
-    if (prefixProxyEditor?.fileName === name) {
+    if (prefixProxyEditor?.originalFileName === name) {
       setPrefixProxyEditor(null);
       return;
     }
 
     setPrefixProxyEditor({
+      originalFileName: name,
       fileName: name,
+      fileNameError: null,
       fileInfoText: JSON.stringify(file, null, 2),
       isCodexFile,
       loading: true,
@@ -173,7 +196,7 @@ export function useAuthFilesPrefixProxyEditor(
         parsed = JSON.parse(trimmed) as unknown;
       } catch {
         setPrefixProxyEditor((prev) => {
-          if (!prev || prev.fileName !== name) return prev;
+          if (!prev || prev.originalFileName !== name) return prev;
           return {
             ...prev,
             loading: false,
@@ -187,7 +210,7 @@ export function useAuthFilesPrefixProxyEditor(
 
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
         setPrefixProxyEditor((prev) => {
-          if (!prev || prev.fileName !== name) return prev;
+          if (!prev || prev.originalFileName !== name) return prev;
           return {
             ...prev,
             loading: false,
@@ -215,7 +238,7 @@ export function useAuthFilesPrefixProxyEditor(
       const note = typeof json.note === 'string' ? json.note : '';
 
       setPrefixProxyEditor((prev) => {
-        if (!prev || prev.fileName !== name) return prev;
+        if (!prev || prev.originalFileName !== name) return prev;
         return {
           ...prev,
           loading: false,
@@ -237,7 +260,7 @@ export function useAuthFilesPrefixProxyEditor(
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : t('notification.download_failed');
       setPrefixProxyEditor((prev) => {
-        if (!prev || prev.fileName !== name) return prev;
+        if (!prev || prev.originalFileName !== name) return prev;
         return { ...prev, loading: false, error: errorMessage, rawText: '' };
       });
       showNotification(`${t('notification.download_failed')}: ${errorMessage}`, 'error');
@@ -250,6 +273,14 @@ export function useAuthFilesPrefixProxyEditor(
   ) => {
     setPrefixProxyEditor((prev) => {
       if (!prev) return prev;
+      if (field === 'fileName') {
+        const nextFileName = String(value);
+        return {
+          ...prev,
+          fileName: nextFileName,
+          fileNameError: getEditorFileNameError(nextFileName, t),
+        };
+      }
       if (field === 'prefix') return { ...prev, prefix: String(value) };
       if (field === 'proxyUrl') return { ...prev, proxyUrl: String(value) };
       if (field === 'priority') return { ...prev, priority: String(value) };
@@ -261,28 +292,46 @@ export function useAuthFilesPrefixProxyEditor(
   };
 
   const handlePrefixProxySave = async () => {
-    if (!prefixProxyEditor?.json) return;
+    if (!prefixProxyEditor) return;
     if (!prefixProxyDirty) return;
 
-    const name = prefixProxyEditor.fileName;
-    const payload = prefixProxyUpdatedText;
-    const fileSize = new Blob([payload]).size;
-    if (fileSize > MAX_AUTH_FILE_SIZE) {
-      showNotification(
-        t('auth_files.upload_error_size', { maxSize: formatFileSize(MAX_AUTH_FILE_SIZE) }),
-        'error'
-      );
+    const oldName = prefixProxyEditor.originalFileName;
+    const newName = normalizeEditorFileName(prefixProxyEditor.fileName);
+    const fileNameError = getEditorFileNameError(newName, t);
+    if (fileNameError) {
+      setPrefixProxyEditor((prev) => {
+        if (!prev || prev.originalFileName !== oldName) return prev;
+        return { ...prev, fileNameError };
+      });
+      showNotification(fileNameError, 'error');
       return;
     }
 
+    const contentChanged =
+      Boolean(prefixProxyEditor.json) && prefixProxyUpdatedText !== prefixProxyEditor.originalText;
+    if (contentChanged) {
+      const fileSize = new Blob([prefixProxyUpdatedText]).size;
+      if (fileSize > MAX_AUTH_FILE_SIZE) {
+        showNotification(
+          t('auth_files.upload_error_size', { maxSize: formatFileSize(MAX_AUTH_FILE_SIZE) }),
+          'error'
+        );
+        return;
+      }
+    }
+
     setPrefixProxyEditor((prev) => {
-      if (!prev || prev.fileName !== name) return prev;
+      if (!prev || prev.originalFileName !== oldName) return prev;
       return { ...prev, saving: true };
     });
 
     try {
-      await authFilesApi.saveText(name, payload);
-      showNotification(t('auth_files.prefix_proxy_saved_success', { name }), 'success');
+      await authFilesApi.save({
+        oldName,
+        newName,
+        ...(contentChanged ? { content: prefixProxyUpdatedText } : {}),
+      });
+      showNotification(t('auth_files.prefix_proxy_saved_success', { name: newName }), 'success');
       await loadFiles();
       await loadKeyStats();
       setPrefixProxyEditor(null);
@@ -290,7 +339,7 @@ export function useAuthFilesPrefixProxyEditor(
       const errorMessage = err instanceof Error ? err.message : '';
       showNotification(`${t('notification.upload_failed')}: ${errorMessage}`, 'error');
       setPrefixProxyEditor((prev) => {
-        if (!prev || prev.fileName !== name) return prev;
+        if (!prev || prev.originalFileName !== oldName) return prev;
         return { ...prev, saving: false };
       });
     }

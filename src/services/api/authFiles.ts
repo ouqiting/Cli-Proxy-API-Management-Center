@@ -9,6 +9,13 @@ import type { OAuthModelAliasEntry } from '@/types';
 type StatusError = { status?: number };
 type AuthFileStatusResponse = { status: string; disabled: boolean };
 type AuthFileEntry = AuthFilesResponse['files'][number];
+type SaveAuthFileResponse = { name: string; oldName?: string };
+type SaveAuthFilePayload = {
+  oldName: string;
+  newName?: string;
+  content?: string;
+  json?: Record<string, unknown>;
+};
 
 export const AUTH_FILE_INVALID_JSON_OBJECT_ERROR = 'AUTH_FILE_INVALID_JSON_OBJECT';
 
@@ -151,9 +158,19 @@ const parseAuthFileJsonObject = (rawText: string): Record<string, unknown> => {
   return { ...(parsed as Record<string, unknown>) };
 };
 
-const saveAuthFileText = async (name: string, text: string) => {
-  const file = new File([text], name, { type: 'application/json' });
-  await authFilesApi.upload(file);
+const saveAuthFile = async (payload: SaveAuthFilePayload): Promise<SaveAuthFileResponse> => {
+  const request: Record<string, unknown> = { oldName: payload.oldName };
+
+  if (payload.newName !== undefined) {
+    request.newName = payload.newName;
+  }
+  if (payload.content !== undefined) {
+    request.content = payload.content;
+  } else if (payload.json !== undefined) {
+    request.json = payload.json;
+  }
+
+  return apiClient.patch<SaveAuthFileResponse>('/auth-files', request);
 };
 
 export const isAuthFileInvalidJsonObjectError = (err: unknown): boolean =>
@@ -201,10 +218,7 @@ const normalizeOauthModelAlias = (payload: unknown): Record<string, OAuthModelAl
   if (!payload || typeof payload !== 'object') return {};
 
   const record = payload as Record<string, unknown>;
-  const source =
-    record['oauth-model-alias'] ??
-    record.items ??
-    payload;
+  const source = record['oauth-model-alias'] ?? record.items ?? payload;
   if (!source || typeof source !== 'object') return {};
 
   const result: Record<string, OAuthModelAliasEntry[]> = {};
@@ -216,17 +230,17 @@ const normalizeOauthModelAlias = (payload: unknown): Record<string, OAuthModelAl
     if (!key) return;
     if (!Array.isArray(mappings)) return;
 
-	    const seen = new Set<string>();
-	    const normalized = mappings
-	      .map((item) => {
-	        if (!item || typeof item !== 'object') return null;
-	        const entry = item as Record<string, unknown>;
-	        const name = String(entry.name ?? entry.id ?? entry.model ?? '').trim();
-	        const alias = String(entry.alias ?? '').trim();
-	        if (!name || !alias) return null;
-	        const fork = entry.fork === true;
-	        return fork ? { name, alias, fork } : { name, alias };
-	      })
+    const seen = new Set<string>();
+    const normalized = mappings
+      .map((item) => {
+        if (!item || typeof item !== 'object') return null;
+        const entry = item as Record<string, unknown>;
+        const name = String(entry.name ?? entry.id ?? entry.model ?? '').trim();
+        const alias = String(entry.alias ?? '').trim();
+        if (!name || !alias) return null;
+        const fork = entry.fork === true;
+        return fork ? { name, alias, fork } : { name, alias };
+      })
       .filter(Boolean)
       .filter((entry) => {
         const aliasEntry = entry as OAuthModelAliasEntry;
@@ -263,9 +277,12 @@ export const authFilesApi = {
   deleteAll: () => apiClient.delete('/auth-files', { params: { all: true } }),
 
   downloadText: async (name: string): Promise<string> => {
-    const response = await apiClient.getRaw(`/auth-files/download?name=${encodeURIComponent(name)}`, {
-      responseType: 'blob'
-    });
+    const response = await apiClient.getRaw(
+      `/auth-files/download?name=${encodeURIComponent(name)}`,
+      {
+        responseType: 'blob',
+      }
+    );
     const blob = response.data as Blob;
     return blob.text();
   },
@@ -275,10 +292,13 @@ export const authFilesApi = {
     return parseAuthFileJsonObject(rawText);
   },
 
-  saveText: (name: string, text: string) => saveAuthFileText(name, text),
+  save: (payload: SaveAuthFilePayload) => saveAuthFile(payload),
+
+  saveText: (name: string, text: string) =>
+    saveAuthFile({ oldName: name, newName: name, content: text }),
 
   saveJsonObject: (name: string, json: Record<string, unknown>) =>
-    saveAuthFileText(name, JSON.stringify(json)),
+    saveAuthFile({ oldName: name, newName: name, json }),
 
   // OAuth 排除模型
   async getOauthExcludedModels(): Promise<Record<string, string[]>> {
@@ -305,8 +325,12 @@ export const authFilesApi = {
     const normalizedChannel = String(channel ?? '')
       .trim()
       .toLowerCase();
-    const normalizedAliases = normalizeOauthModelAlias({ [normalizedChannel]: aliases })[normalizedChannel] ?? [];
-    await apiClient.patch(OAUTH_MODEL_ALIAS_ENDPOINT, { channel: normalizedChannel, aliases: normalizedAliases });
+    const normalizedAliases =
+      normalizeOauthModelAlias({ [normalizedChannel]: aliases })[normalizedChannel] ?? [];
+    await apiClient.patch(OAUTH_MODEL_ALIAS_ENDPOINT, {
+      channel: normalizedChannel,
+      aliases: normalizedAliases,
+    });
   },
 
   deleteOauthModelAlias: async (channel: string) => {
@@ -315,16 +339,23 @@ export const authFilesApi = {
       .toLowerCase();
 
     try {
-      await apiClient.patch(OAUTH_MODEL_ALIAS_ENDPOINT, { channel: normalizedChannel, aliases: [] });
+      await apiClient.patch(OAUTH_MODEL_ALIAS_ENDPOINT, {
+        channel: normalizedChannel,
+        aliases: [],
+      });
     } catch (err: unknown) {
       const status = getStatusCode(err);
       if (status !== 405) throw err;
-      await apiClient.delete(`${OAUTH_MODEL_ALIAS_ENDPOINT}?channel=${encodeURIComponent(normalizedChannel)}`);
+      await apiClient.delete(
+        `${OAUTH_MODEL_ALIAS_ENDPOINT}?channel=${encodeURIComponent(normalizedChannel)}`
+      );
     }
   },
 
   // 获取认证凭证支持的模型
-  async getModelsForAuthFile(name: string): Promise<{ id: string; display_name?: string; type?: string; owned_by?: string }[]> {
+  async getModelsForAuthFile(
+    name: string
+  ): Promise<{ id: string; display_name?: string; type?: string; owned_by?: string }[]> {
     const data = await apiClient.get<Record<string, unknown>>(
       `/auth-files/models?name=${encodeURIComponent(name)}`
     );
@@ -335,8 +366,12 @@ export const authFilesApi = {
   },
 
   // 获取指定 channel 的模型定义
-  async getModelDefinitions(channel: string): Promise<{ id: string; display_name?: string; type?: string; owned_by?: string }[]> {
-    const normalizedChannel = String(channel ?? '').trim().toLowerCase();
+  async getModelDefinitions(
+    channel: string
+  ): Promise<{ id: string; display_name?: string; type?: string; owned_by?: string }[]> {
+    const normalizedChannel = String(channel ?? '')
+      .trim()
+      .toLowerCase();
     if (!normalizedChannel) return [];
     const data = await apiClient.get<Record<string, unknown>>(
       `/model-definitions/${encodeURIComponent(normalizedChannel)}`
@@ -345,5 +380,5 @@ export const authFilesApi = {
     return Array.isArray(models)
       ? (models as { id: string; display_name?: string; type?: string; owned_by?: string }[])
       : [];
-  }
+  },
 };

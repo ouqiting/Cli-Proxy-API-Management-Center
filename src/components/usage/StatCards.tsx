@@ -1,7 +1,13 @@
 import { useMemo, type CSSProperties, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Line } from 'react-chartjs-2';
-import { IconDiamond, IconDollarSign, IconSatellite, IconTimer, IconTrendingUp } from '@/components/ui/icons';
+import {
+  IconDiamond,
+  IconDollarSign,
+  IconSatellite,
+  IconTimer,
+  IconTrendingUp,
+} from '@/components/ui/icons';
 import {
   formatCompactNumber,
   formatPerMinuteValue,
@@ -9,7 +15,7 @@ import {
   calculateCost,
   collectUsageDetails,
   extractTotalTokens,
-  type ModelPrice
+  type ModelPrice,
 } from '@/utils/usage';
 import { sparklineOptions } from '@/utils/usage/chartConfig';
 import type { UsagePayload } from './hooks/useUsageData';
@@ -40,9 +46,21 @@ export interface StatCardsProps {
     tpm: SparklineBundle | null;
     cost: SparklineBundle | null;
   };
+  persistedRpm?: number | null;
+  persistedTpm?: number | null;
+  persistedTotalCost?: number | null;
 }
 
-export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: StatCardsProps) {
+export function StatCards({
+  usage,
+  loading,
+  modelPrices,
+  nowMs,
+  sparklines,
+  persistedRpm,
+  persistedTpm,
+  persistedTotalCost,
+}: StatCardsProps) {
   const { t } = useTranslation();
 
   const hasPrices = Object.keys(modelPrices).length > 0;
@@ -50,8 +68,14 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
   const { tokenBreakdown, rateStats, totalCost } = useMemo(() => {
     const empty = {
       tokenBreakdown: { cachedTokens: 0, reasoningTokens: 0 },
-      rateStats: { rpm: 0, tpm: 0, windowMinutes: 30, requestCount: 0, tokenCount: 0 },
-      totalCost: 0
+      rateStats: {
+        rpm: persistedRpm ?? 0,
+        tpm: persistedTpm ?? 0,
+        windowMinutes: 30,
+        requestCount: 0,
+        tokenCount: 0,
+      },
+      totalCost: persistedTotalCost ?? 0,
     };
 
     if (!usage) return empty;
@@ -80,7 +104,12 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
       }
 
       const timestamp = detail.__timestampMs ?? 0;
-      if (hasValidNow && Number.isFinite(timestamp) && timestamp >= windowStart && timestamp <= now) {
+      if (
+        hasValidNow &&
+        Number.isFinite(timestamp) &&
+        timestamp >= windowStart &&
+        timestamp <= now
+      ) {
         requestCount += 1;
         tokenCount += extractTotalTokens(detail);
       }
@@ -98,9 +127,9 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
         tpm: tokenCount / denominator,
         windowMinutes,
         requestCount,
-        tokenCount
+        tokenCount,
       },
-      totalCost
+      totalCost,
     };
   }, [hasPrices, modelPrices, nowMs, usage]);
 
@@ -125,7 +154,7 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
           </span>
         </>
       ),
-      trend: sparklines.requests
+      trend: sparklines.requests,
     },
     {
       key: 'tokens',
@@ -138,14 +167,16 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
       meta: (
         <>
           <span className={styles.statMetaItem}>
-            {t('usage_stats.cached_tokens')}: {loading ? '-' : formatCompactNumber(tokenBreakdown.cachedTokens)}
+            {t('usage_stats.cached_tokens')}:{' '}
+            {loading ? '-' : formatCompactNumber(tokenBreakdown.cachedTokens)}
           </span>
           <span className={styles.statMetaItem}>
-            {t('usage_stats.reasoning_tokens')}: {loading ? '-' : formatCompactNumber(tokenBreakdown.reasoningTokens)}
+            {t('usage_stats.reasoning_tokens')}:{' '}
+            {loading ? '-' : formatCompactNumber(tokenBreakdown.reasoningTokens)}
           </span>
         </>
       ),
-      trend: sparklines.tokens
+      trend: sparklines.tokens,
     },
     {
       key: 'rpm',
@@ -157,10 +188,11 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
       value: loading ? '-' : formatPerMinuteValue(rateStats.rpm),
       meta: (
         <span className={styles.statMetaItem}>
-          {t('usage_stats.total_requests')}: {loading ? '-' : rateStats.requestCount.toLocaleString()}
+          {t('usage_stats.total_requests')}:{' '}
+          {loading ? '-' : rateStats.requestCount.toLocaleString()}
         </span>
       ),
-      trend: sparklines.rpm
+      trend: sparklines.rpm,
     },
     {
       key: 'tpm',
@@ -172,10 +204,11 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
       value: loading ? '-' : formatPerMinuteValue(rateStats.tpm),
       meta: (
         <span className={styles.statMetaItem}>
-          {t('usage_stats.total_tokens')}: {loading ? '-' : formatCompactNumber(rateStats.tokenCount)}
+          {t('usage_stats.total_tokens')}:{' '}
+          {loading ? '-' : formatCompactNumber(rateStats.tokenCount)}
         </span>
       ),
-      trend: sparklines.tpm
+      trend: sparklines.tpm,
     },
     {
       key: 'cost',
@@ -188,7 +221,8 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
       meta: (
         <>
           <span className={styles.statMetaItem}>
-            {t('usage_stats.total_tokens')}: {loading ? '-' : formatCompactNumber(usage?.total_tokens ?? 0)}
+            {t('usage_stats.total_tokens')}:{' '}
+            {loading ? '-' : formatCompactNumber(usage?.total_tokens ?? 0)}
           </span>
           {!hasPrices && (
             <span className={`${styles.statMetaItem} ${styles.statSubtle}`}>
@@ -197,8 +231,8 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
           )}
         </>
       ),
-      trend: hasPrices ? sparklines.cost : null
-    }
+      trend: hasPrices ? sparklines.cost : null,
+    },
   ];
 
   return (
@@ -211,7 +245,7 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
             {
               '--accent': card.accent,
               '--accent-soft': card.accentSoft,
-              '--accent-border': card.accentBorder
+              '--accent-border': card.accentBorder,
             } as CSSProperties
           }
         >
@@ -225,7 +259,11 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
           {card.meta && <div className={styles.statMetaRow}>{card.meta}</div>}
           <div className={styles.statTrend}>
             {card.trend ? (
-              <Line className={styles.sparkline} data={card.trend.data} options={sparklineOptions} />
+              <Line
+                className={styles.sparkline}
+                data={card.trend.data}
+                options={sparklineOptions}
+              />
             ) : (
               <div className={styles.statTrendPlaceholder}></div>
             )}

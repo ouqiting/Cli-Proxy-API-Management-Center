@@ -7,10 +7,7 @@ import { collectUsageDetails } from '@/utils/usage';
 import { webdavClient } from '../client/webdavClient';
 import { useWebdavStore } from '../store/useWebdavStore';
 import type { BackupPayload, BackupData, BackupScope, WebdavFileInfo } from '../types';
-import {
-  BACKUP_LOCALSTORAGE_KEYS,
-  LATEST_LOCAL_BACKUP_PATH,
-} from '../constants';
+import { BACKUP_LOCALSTORAGE_KEYS, LATEST_LOCAL_BACKUP_PATH } from '../constants';
 import {
   generateBackupFilename,
   isBackupFile,
@@ -104,9 +101,10 @@ const isValidBackupPayload = (payload: unknown): payload is BackupPayload => {
 };
 
 const isUsageSnapshotEmpty = (payload: unknown): boolean => {
-  const usage = typeof payload === 'object' && payload !== null && 'usage' in payload
-    ? (payload as { usage?: unknown }).usage
-    : payload;
+  const usage =
+    typeof payload === 'object' && payload !== null && 'usage' in payload
+      ? (payload as { usage?: unknown }).usage
+      : payload;
   return collectUsageDetails(usage).length === 0;
 };
 
@@ -258,12 +256,9 @@ export function useBackupActions() {
 
   const backup = useCallback(() => performBackup(), [performBackup]);
 
-  const backupOrThrow = useCallback(
-    async () => {
-      await performBackup({ throwOnError: true });
-    },
-    [performBackup]
-  );
+  const backupOrThrow = useCallback(async () => {
+    await performBackup({ throwOnError: true });
+  }, [performBackup]);
 
   const exportLocal = useCallback(async () => {
     const { backupScope } = useWebdavStore.getState();
@@ -340,7 +335,10 @@ export function useBackupActions() {
           try {
             await deleteLatestLocalBackup();
           } catch (mirrorError) {
-            console.warn('[WebDAV Backup] Failed to delete latest local backup mirror:', mirrorError);
+            console.warn(
+              '[WebDAV Backup] Failed to delete latest local backup mirror:',
+              mirrorError
+            );
           }
         }
         showNotification(t('backup.delete_success'), 'success');
@@ -434,6 +432,9 @@ async function applyRestore(payload: BackupPayload, scope: BackupScope): Promise
   if (scope.localStorage && data.localStorage) {
     for (const [key, val] of Object.entries(data.localStorage)) {
       localStorage.setItem(key, val);
+      if (key === 'cli-proxy-usage-stats-v1') {
+        webuiDataApi.writeTextFile('cli-proxy-usage-stats-v1.json', val).catch(() => {});
+      }
     }
   }
 

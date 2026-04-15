@@ -43,8 +43,10 @@ export function AuthFilesPrefixProxyEditorModal(props: AuthFilesPrefixProxyEdito
       closeDisabled={editor?.saving === true}
       width={720}
       title={
-        editor?.fileName
-          ? t('auth_files.auth_field_editor_title', { name: editor.fileName })
+        editor?.originalFileName
+          ? t('auth_files.auth_field_editor_title', {
+              name: editor.fileName.trim() || editor.originalFileName,
+            })
           : t('auth_files.prefix_proxy_button')
       }
       footer={
@@ -65,7 +67,13 @@ export function AuthFilesPrefixProxyEditorModal(props: AuthFilesPrefixProxyEdito
           <Button
             onClick={onSave}
             loading={editor?.saving === true}
-            disabled={disableControls || editor?.saving === true || !dirty || !editor?.json}
+            disabled={
+              disableControls ||
+              editor?.saving === true ||
+              editor?.loading === true ||
+              !dirty ||
+              Boolean(editor?.fileNameError)
+            }
           >
             {t('common.save')}
           </Button>
@@ -105,6 +113,15 @@ export function AuthFilesPrefixProxyEditorModal(props: AuthFilesPrefixProxyEdito
                 />
               </div>
               <div className={styles.prefixProxyFields}>
+                <Input
+                  label={t('auth_files.file_name_label')}
+                  value={editor.fileName}
+                  placeholder={t('auth_files.file_name_placeholder')}
+                  hint={t('auth_files.file_name_hint')}
+                  error={editor.fileNameError ?? undefined}
+                  disabled={disableControls || editor.saving}
+                  onChange={(e) => onChange('fileName', e.target.value)}
+                />
                 <Input
                   label={t('auth_files.prefix_label')}
                   value={editor.prefix}
