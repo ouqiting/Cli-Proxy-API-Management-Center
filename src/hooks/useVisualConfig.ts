@@ -5,6 +5,7 @@ import type {
   PayloadParamEntry,
   PayloadParamValueType,
   PayloadRule,
+  VisualConfigApiKeyEntry,
   VisualConfigValues,
   VisualConfigValidationErrors,
   PayloadParamValidationErrorCode,
@@ -36,32 +37,123 @@ function extractApiKeyValue(raw: unknown): string | null {
   return null;
 }
 
-function parseApiKeysText(raw: unknown): string {
-  if (!Array.isArray(raw)) return '';
+function normalizeModelNameList(raw: unknown): string[] {
+  const rawList = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(/[\n,]+/) : [];
+  const seen = new Set<string>();
+  const models: string[] = [];
 
-  const keys: string[] = [];
-  for (const item of raw) {
-    const key = extractApiKeyValue(item);
-    if (key) keys.push(key);
+  for (const item of rawList) {
+    const trimmed = String(item ?? '').trim();
+    if (!trimmed) continue;
+    const dedupeKey = trimmed.toLowerCase();
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    models.push(trimmed);
   }
-  return keys.join('\n');
+
+  return models;
 }
 
-function resolveApiKeysText(parsed: Record<string, unknown>): string {
+function parseApiKeyEntries(raw: unknown): VisualConfigApiKeyEntry[] {
+  if (!Array.isArray(raw)) return [];
+
+  const entries: VisualConfigApiKeyEntry[] = [];
+  for (const item of raw) {
+    const apiKey = extractApiKeyValue(item);
+    if (!apiKey) continue;
+    const record = asRecord(item);
+    const disabledModels = normalizeModelNameList(
+      record?.['disabled-models'] ?? record?.disabledModels
+    );
+    entries.push({
+      id: `api-key-${entries.length}`,
+      apiKey,
+      disabledModels,
+    });
+  }
+
+  return entries;
+}
+
+function parseApiKeyModelEntries(raw: unknown): Array<{ apiKey: string; disabledModels: string[] }> {
+  if (!Array.isArray(raw)) return [];
+
+  const entries: Array<{ apiKey: string; disabledModels: string[] }> = [];
+  for (const item of raw) {
+    const apiKey = extractApiKeyValue(item);
+    if (!apiKey) continue;
+    const record = asRecord(item);
+    const disabledModels = normalizeModelNameList(
+      record?.['disabled-models'] ?? record?.disabledModels
+    );
+    if (disabledModels.length === 0) continue;
+    entries.push({ apiKey, disabledModels });
+  }
+
+  return entries;
+}
+
+function resolveApiKeyEntries(parsed: Record<string, unknown>): VisualConfigApiKeyEntry[] {
+  const entriesMap = new Map<string, VisualConfigApiKeyEntry>();
+
   if (Object.prototype.hasOwnProperty.call(parsed, 'api-keys')) {
-    return parseApiKeysText(parsed['api-keys']);
+    parseApiKeyEntries(parsed['api-keys']).forEach((entry, index) => {
+      entriesMap.set(entry.apiKey, { ...entry, id: `api-key-${index}` });
+    });
+  }
+
+  parseApiKeyModelEntries(parsed['api-key-models']).forEach((entry) => {
+    const existing = entriesMap.get(entry.apiKey);
+    if (existing) {
+      entriesMap.set(entry.apiKey, { ...existing, disabledModels: entry.disabledModels });
+      return;
+    }
+    entriesMap.set(entry.apiKey, {
+      id: `api-key-${entriesMap.size}`,
+      apiKey: entry.apiKey,
+      disabledModels: entry.disabledModels,
+    });
+  });
+
+  if (entriesMap.size > 0) {
+    return Array.from(entriesMap.values());
   }
 
   const auth = asRecord(parsed.auth);
   const providers = asRecord(auth?.providers);
   const configApiKeyProvider = asRecord(providers?.['config-api-key']);
-  if (!configApiKeyProvider) return '';
+  if (!configApiKeyProvider) return [];
 
   if (Object.prototype.hasOwnProperty.call(configApiKeyProvider, 'api-key-entries')) {
-    return parseApiKeysText(configApiKeyProvider['api-key-entries']);
+    return parseApiKeyEntries(configApiKeyProvider['api-key-entries']);
   }
 
-  return parseApiKeysText(configApiKeyProvider['api-keys']);
+  return parseApiKeyEntries(configApiKeyProvider['api-keys']);
+}
+
+function serializeApiKeysForYaml(entries: VisualConfigApiKeyEntry[]): string[] {
+  return entries
+    .map((entry) => String(entry.apiKey ?? '').trim())
+    .filter(Boolean);
+}
+
+function serializeApiKeyModelEntriesForYaml(
+  entries: VisualConfigApiKeyEntry[]
+): Array<Record<string, unknown>> {
+  return entries
+    .map((entry) => {
+      const apiKey = String(entry.apiKey ?? '').trim();
+      if (!apiKey) return null;
+
+      const disabledModels = normalizeModelNameList(entry.disabledModels);
+      if (disabledModels.length === 0) return null;
+
+      return {
+        'api-key': apiKey,
+        'disabled-models': disabledModels,
+      };
+    })
+    .filter(Boolean) as Array<Record<string, unknown>>;
 }
 
 type YamlDocument = ReturnType<typeof parseDocument>;
@@ -498,7 +590,7 @@ export function useVisualConfig() {
               : '',
 
         authDir: typeof parsed['auth-dir'] === 'string' ? parsed['auth-dir'] : '',
-        apiKeysText: resolveApiKeysText(parsed),
+        apiKeyEntries: resolveApiKeyEntries(parsed),
 
         debug: Boolean(parsed.debug),
         commercialMode: Boolean(parsed['commercial-mode']),
@@ -592,14 +684,17 @@ export function useVisualConfig() {
         }
 
         setStringInDoc(doc, ['auth-dir'], values.authDir);
-        const apiKeys = values.apiKeysText
-          .split('\n')
-          .map((key) => key.trim())
-          .filter(Boolean);
+        const apiKeys = serializeApiKeysForYaml(values.apiKeyEntries);
         if (apiKeys.length > 0) {
           doc.setIn(['api-keys'], apiKeys);
         } else if (docHas(doc, ['api-keys'])) {
           doc.deleteIn(['api-keys']);
+        }
+        const apiKeyModels = serializeApiKeyModelEntriesForYaml(values.apiKeyEntries);
+        if (apiKeyModels.length > 0) {
+          doc.setIn(['api-key-models'], apiKeyModels);
+        } else if (docHas(doc, ['api-key-models'])) {
+          doc.deleteIn(['api-key-models']);
         }
         deleteLegacyApiKeysProvider(doc);
 

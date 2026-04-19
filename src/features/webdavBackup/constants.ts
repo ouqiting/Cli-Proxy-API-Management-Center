@@ -4,21 +4,13 @@ export const WEBDAV_STORE_KEY = 'cli-proxy-webdav';
 
 export const BACKUP_FILE_PREFIX = 'cpamc-backup-';
 export const BACKUP_FILE_EXT = '.json';
-export const LATEST_LOCAL_BACKUP_PATH = 'cpamc-backup-latest.json';
+export const LOCAL_BACKUP_DIR = 'backup';
+export const LOCAL_BACKUP_INDEX_PATH = `${LOCAL_BACKUP_DIR}/index.json`;
+export const LATEST_LOCAL_BACKUP_PATH = `${LOCAL_BACKUP_DIR}/cpamc-backup-latest.json`;
 
 export const DEFAULT_BASE_PATH = '/cpamc-backups/';
 
 export const BACKUP_ENCRYPTION_SALT = 'cpamc-webdav-backup::portable-key';
-
-/** localStorage 中需要备份的 key 列表 */
-export const BACKUP_LOCALSTORAGE_KEYS = [
-  'cli-proxy-theme',
-  'cli-proxy-language',
-  'cli-proxy-sidebar-collapsed',
-  'cli-proxy-auth-files-page-size',
-  'model-prices',
-  'disabled-models-store',
-];
 
 export const AUTO_BACKUP_INTERVALS: { value: AutoBackupInterval; ms: number }[] = [
   { value: '5m', ms: 5 * 60 * 1000 },

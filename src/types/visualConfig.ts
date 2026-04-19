@@ -46,6 +46,12 @@ export type PayloadFilterRule = {
   params: string[];
 };
 
+export type VisualConfigApiKeyEntry = {
+  id: string;
+  apiKey: string;
+  disabledModels: string[];
+};
+
 export interface StreamingConfig {
   keepaliveSeconds: string;
   bootstrapRetries: string;
@@ -63,7 +69,7 @@ export type VisualConfigValues = {
   rmDisableControlPanel: boolean;
   rmPanelRepo: string;
   authDir: string;
-  apiKeysText: string;
+  apiKeyEntries: VisualConfigApiKeyEntry[];
   debug: boolean;
   commercialMode: boolean;
   loggingToFile: boolean;
@@ -103,7 +109,7 @@ export const DEFAULT_VISUAL_VALUES: VisualConfigValues = {
   rmDisableControlPanel: false,
   rmPanelRepo: '',
   authDir: '',
-  apiKeysText: '',
+  apiKeyEntries: [],
   debug: false,
   commercialMode: false,
   loggingToFile: false,

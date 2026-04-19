@@ -90,6 +90,31 @@ export interface ModelGroup {
   items: ModelInfo[];
 }
 
+export function mergeModelLists(models: ModelInfo[] = [], extraModelNames: string[] = []): ModelInfo[] {
+  const merged: ModelInfo[] = [];
+  const seen = new Set<string>();
+
+  models.forEach((model) => {
+    const name = String(model?.name || '').trim();
+    if (!name) return;
+    const key = name.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    merged.push(model);
+  });
+
+  extraModelNames.forEach((name) => {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) return;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    merged.push({ name: trimmed });
+  });
+
+  return merged;
+}
+
 export function classifyModels(models: ModelInfo[] = [], { otherLabel = 'Other' } = {}): ModelGroup[] {
   const groups: ModelGroup[] = MODEL_CATEGORIES.map((category) => ({
     id: category.id,

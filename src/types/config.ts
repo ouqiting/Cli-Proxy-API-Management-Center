@@ -11,6 +11,11 @@ export interface QuotaExceededConfig {
   switchPreviewModel?: boolean;
 }
 
+export interface ConfigApiKeyEntry {
+  apiKey: string;
+  disabledModels?: string[];
+}
+
 export interface Config {
   debug?: boolean;
   proxyUrl?: string;
@@ -24,7 +29,7 @@ export interface Config {
   wsAuth?: boolean;
   forceModelPrefix?: boolean;
   routingStrategy?: string;
-  apiKeys?: string[];
+  apiKeys?: ConfigApiKeyEntry[];
   ampcode?: AmpcodeConfig;
   geminiApiKeys?: GeminiKeyConfig[];
   codexApiKeys?: ProviderKeyConfig[];

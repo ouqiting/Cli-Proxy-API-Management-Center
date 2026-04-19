@@ -710,6 +710,79 @@
   }
 }
 
+.apiKeyCardMetaRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.apiKeyCardMetaLabel {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.apiKeyModelsModalBody {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.apiKeyModelsSummary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 84%, transparent);
+  background: color-mix(in srgb, var(--bg-primary) 88%, transparent);
+}
+
+.apiKeyModelsSummaryTitle {
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.apiKeyModelsSummaryText,
+.apiKeyModelsStatus {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.apiKeyModelsManualAdd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  :global(.input) {
+    flex: 1;
+  }
+}
+
+.apiKeyModelsList {
+  max-height: 360px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 4px;
+}
+
+.apiKeyModelItem {
+  border-radius: 16px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 82%, transparent);
+  background: color-mix(in srgb, var(--bg-primary) 84%, transparent);
+}
+
+.apiKeyModelLabel {
+  word-break: break-word;
+}
+
 @media (max-width: 900px) {
   .payloadRuleModelRow,
   .payloadRuleModelRowProtocolFirst,
@@ -719,6 +792,11 @@
   }
 
   .apiKeyModalInputRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .apiKeyModelsManualAdd {
     flex-direction: column;
     align-items: stretch;
   }

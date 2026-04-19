@@ -24,6 +24,32 @@ interface DisabledCredentialsStoreState {
 
 let inFlightSnapshotRequest: Promise<CredentialDisableSnapshot | null> | null = null;
 
+const applyOpenAIApiKeyEntryDisabledState = (
+  snapshot: CredentialDisableSnapshot | null,
+  providerName: string,
+  providerBaseUrl: string,
+  apiKey: string,
+  disabled: boolean
+): CredentialDisableSnapshot | null => {
+  if (!snapshot) return snapshot;
+
+  return {
+    ...snapshot,
+    openaiProviders: snapshot.openaiProviders.map((provider) => {
+      if (provider.name !== providerName || provider.baseUrl !== providerBaseUrl) {
+        return provider;
+      }
+
+      return {
+        ...provider,
+        apiKeyEntries: (provider.apiKeyEntries || []).map((entry) =>
+          entry.apiKey === apiKey ? { ...entry, disabled } : entry
+        ),
+      };
+    }),
+  };
+};
+
 export const useDisabledCredentialsStore = create<DisabledCredentialsStoreState>((set, get) => ({
   snapshot: null,
   loading: false,
@@ -85,6 +111,15 @@ export const useDisabledCredentialsStore = create<DisabledCredentialsStoreState>
       target.apiKey,
       disabled
     );
-    await get().refreshSnapshot(true);
+    set((state) => ({
+      snapshot: applyOpenAIApiKeyEntryDisabledState(
+        state.snapshot,
+        target.providerName,
+        target.providerBaseUrl,
+        target.apiKey,
+        disabled
+      ),
+      error: null,
+    }));
   },
 }));

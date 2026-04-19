@@ -23,7 +23,7 @@ export const isAuthFilesSortMode = (value: unknown): value is AuthFilesSortMode 
 export const readAuthFilesUiState = (): AuthFilesUiState | null => {
   if (typeof window === 'undefined') return null;
   try {
-    const raw = window.sessionStorage.getItem(AUTH_FILES_UI_STATE_KEY);
+    const raw = window.localStorage.getItem(AUTH_FILES_UI_STATE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as AuthFilesUiState;
     return parsed && typeof parsed === 'object' ? parsed : null;
@@ -35,7 +35,7 @@ export const readAuthFilesUiState = (): AuthFilesUiState | null => {
 export const writeAuthFilesUiState = (state: AuthFilesUiState) => {
   if (typeof window === 'undefined') return;
   try {
-    window.sessionStorage.setItem(AUTH_FILES_UI_STATE_KEY, JSON.stringify(state));
+    window.localStorage.setItem(AUTH_FILES_UI_STATE_KEY, JSON.stringify(state));
   } catch {
     // ignore
   }

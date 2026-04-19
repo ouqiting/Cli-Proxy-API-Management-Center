@@ -33,12 +33,24 @@ import {
   useThemeStore,
 } from '@/stores';
 import { triggerHeaderRefresh } from '@/hooks/useHeaderRefresh';
-import { LANGUAGE_LABEL_KEYS, LANGUAGE_ORDER } from '@/utils/constants';
+import {
+  LANGUAGE_LABEL_KEYS,
+  LANGUAGE_ORDER,
+  STORAGE_KEY_LANGUAGE,
+  STORAGE_KEY_SIDEBAR,
+  STORAGE_KEY_THEME,
+} from '@/utils/constants';
 import { isSupportedLanguage } from '@/utils/language';
 import { managementApi } from '@/services/api';
 import { useAutoBackup } from '@/features/webdavBackup/hooks/useAutoBackup';
 import { useBackupActions } from '@/features/webdavBackup/hooks/useBackupActions';
 import { useWebdavStore } from '@/features/webdavBackup/store/useWebdavStore';
+import {
+  flushFrontendStatePersist,
+  hydrateFrontendStateFromLocalFile,
+  persistRuntimeUsageSnapshot,
+  restoreRuntimeUsageSnapshotIfNeeded,
+} from '@/services/localPersistence';
 import type { Theme } from '@/types';
 
 const sidebarIcons: Record<string, ReactNode> = {
@@ -240,6 +252,7 @@ export function MainLayout() {
   const location = useLocation();
 
   const apiBase = useAuthStore((state) => state.apiBase);
+  const managementKey = useAuthStore((state) => state.managementKey);
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const updateConnectionStatus = useAuthStore((state) => state.updateConnectionStatus);
   const logout = useAuthStore((state) => state.logout);
@@ -260,7 +273,12 @@ export function MainLayout() {
   const setLanguage = useLanguageStore((state) => state.setLanguage);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+    return window.localStorage.getItem(STORAGE_KEY_SIDEBAR) === 'true';
+  });
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [brandExpanded, setBrandExpanded] = useState(true);
@@ -271,6 +289,8 @@ export function MainLayout() {
   const brandCollapseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const headerRef = useRef<HTMLElement | null>(null);
   const restartPollTokenRef = useRef(0);
+  const hydratedFrontendScopeRef = useRef('');
+  const restoredRuntimeScopeRef = useRef('');
 
   const fullBrandName = 'CLI Proxy API Management Center Ouqiting';
   const abbrBrandName = t('title.abbr');
@@ -457,11 +477,122 @@ export function MainLayout() {
   }, [fetchConfig]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(STORAGE_KEY_SIDEBAR, sidebarCollapsed ? 'true' : 'false');
+  }, [sidebarCollapsed]);
+
+  useEffect(() => {
     if (connectionStatus !== 'connected' || !apiBase) return;
     hydrateWebdavSettings(true).catch(() => {
       // keep UI usable with defaults if config.yaml bootstrap fails
     });
   }, [apiBase, connectionStatus, hydrateWebdavSettings]);
+
+  useEffect(() => {
+    if (connectionStatus !== 'connected' || !apiBase || !managementKey) {
+      return;
+    }
+
+    const scopeKey = `${apiBase}::${managementKey}`;
+    if (hydratedFrontendScopeRef.current === scopeKey) {
+      return;
+    }
+
+    hydratedFrontendScopeRef.current = scopeKey;
+    let cancelled = false;
+
+    const readPersistedField = (storageKey: string, field: string): string | null => {
+      try {
+        const raw = window.localStorage.getItem(storageKey);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as unknown;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          const record = parsed as Record<string, unknown>;
+          const candidate =
+            record.state &&
+            typeof record.state === 'object' &&
+            !Array.isArray(record.state) &&
+            field in (record.state as Record<string, unknown>)
+              ? (record.state as Record<string, unknown>)[field]
+              : record[field];
+          return typeof candidate === 'string' ? candidate : null;
+        }
+      } catch {
+        const raw = window.localStorage.getItem(storageKey);
+        return typeof raw === 'string' && raw.trim() ? raw : null;
+      }
+      return null;
+    };
+
+    void hydrateFrontendStateFromLocalFile()
+      .then(() => {
+        if (cancelled) return;
+
+        const restoredSidebar = window.localStorage.getItem(STORAGE_KEY_SIDEBAR);
+        if (restoredSidebar === 'true' || restoredSidebar === 'false') {
+          setSidebarCollapsed(restoredSidebar === 'true');
+        }
+
+        const restoredTheme = readPersistedField(STORAGE_KEY_THEME, 'theme');
+        if (
+          restoredTheme === 'auto' ||
+          restoredTheme === 'white' ||
+          restoredTheme === 'light' ||
+          restoredTheme === 'dark'
+        ) {
+          setTheme(restoredTheme);
+        }
+
+        const restoredLanguage = readPersistedField(STORAGE_KEY_LANGUAGE, 'language');
+        if (restoredLanguage && isSupportedLanguage(restoredLanguage)) {
+          setLanguage(restoredLanguage);
+        }
+
+        void flushFrontendStatePersist().catch(() => {});
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase, connectionStatus, managementKey, setLanguage, setTheme]);
+
+  useEffect(() => {
+    if (connectionStatus !== 'connected' || !apiBase || !managementKey) {
+      return;
+    }
+
+    const scopeKey = `${apiBase}::${managementKey}`;
+    if (restoredRuntimeScopeRef.current !== scopeKey) {
+      restoredRuntimeScopeRef.current = scopeKey;
+      void restoreRuntimeUsageSnapshotIfNeeded().catch(() => {});
+    }
+
+    const persistRuntime = () => {
+      void persistRuntimeUsageSnapshot().catch((error) => {
+        console.warn('[Local Persistence] Failed to persist runtime usage:', error);
+      });
+    };
+
+    persistRuntime();
+
+    const intervalId = window.setInterval(persistRuntime, 2 * 60 * 1000);
+    const handlePageHide = () => persistRuntime();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        persistRuntime();
+      }
+    };
+
+    window.addEventListener('pagehide', handlePageHide);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('pagehide', handlePageHide);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [apiBase, connectionStatus, managementKey]);
 
   const statusClass =
     connectionStatus === 'connected'

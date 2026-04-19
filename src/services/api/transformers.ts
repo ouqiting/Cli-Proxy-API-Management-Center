@@ -1,6 +1,7 @@
 import type {
   ApiKeyEntry,
   CloakConfig,
+  ConfigApiKeyEntry,
   GeminiKeyConfig,
   ModelAlias,
   OpenAIProviderConfig,
@@ -111,12 +112,42 @@ const normalizeApiKeyEntry = (entry: unknown): ApiKeyEntry | null => {
 
   const proxyUrl = record ? (record['proxy-url'] ?? record.proxyUrl) : undefined;
   const headers = record ? normalizeHeaders(record.headers) : undefined;
+  const disabled = record
+    ? normalizeBoolean(record.disabled ?? record['disabled'])
+    : undefined;
 
-  return {
+  const result: ApiKeyEntry = {
     apiKey: trimmed,
     proxyUrl: proxyUrl ? String(proxyUrl) : undefined,
     headers,
   };
+  if (disabled !== undefined) {
+    result.disabled = disabled;
+  }
+
+  return result;
+};
+
+const normalizeConfigApiKeyEntry = (entry: unknown): ConfigApiKeyEntry | null => {
+  const record = isRecord(entry) ? entry : null;
+  const rawApiKey =
+    typeof entry === 'string'
+      ? entry
+      : record
+        ? (record['api-key'] ?? record.apiKey ?? record.key ?? record.Key)
+        : '';
+  const apiKey = String(rawApiKey ?? '').trim();
+  if (!apiKey) return null;
+
+  const disabledModels = normalizeExcludedModels(
+    record?.['disabled-models'] ?? record?.disabledModels
+  );
+
+  const normalized: ConfigApiKeyEntry = { apiKey };
+  if (disabledModels.length) {
+    normalized.disabledModels = disabledModels;
+  }
+  return normalized;
 };
 
 const normalizeProviderKeyConfig = (item: unknown): ProviderKeyConfig | null => {
@@ -423,7 +454,9 @@ export const normalizeConfigResponse = (raw: unknown): Config => {
   }
   const apiKeysRaw = raw['api-keys'] ?? raw.apiKeys;
   if (Array.isArray(apiKeysRaw)) {
-    config.apiKeys = apiKeysRaw.map((key) => String(key)).filter((key) => key.trim() !== '');
+    config.apiKeys = apiKeysRaw
+      .map((entry) => normalizeConfigApiKeyEntry(entry))
+      .filter(Boolean) as ConfigApiKeyEntry[];
   }
 
   const geminiList = raw['gemini-api-key'] ?? raw.geminiApiKey ?? raw.geminiApiKeys;

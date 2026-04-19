@@ -1,9 +1,11 @@
-import { memo, useId, useMemo, useState } from 'react';
+import { memo, useEffect, useId, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
-import { useNotificationStore } from '@/stores';
+import { SelectionCheckbox } from '@/components/ui/SelectionCheckbox';
+import { modelsApi } from '@/services/api/models';
+import { useAuthStore, useNotificationStore } from '@/stores';
 import styles from './VisualConfigEditor.module.scss';
 import { copyToClipboard } from '@/utils/clipboard';
 import type {
@@ -13,6 +15,7 @@ import type {
   PayloadParamValidationErrorCode,
   PayloadParamValueType,
   PayloadRule,
+  VisualConfigApiKeyEntry,
 } from '@/types/visualConfig';
 import { makeClientId } from '@/types/visualConfig';
 import {
@@ -55,40 +58,268 @@ function buildProtocolOptions(
   return options;
 }
 
+function normalizeUniqueStrings(items: string[]): string[] {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+
+  items.forEach((item) => {
+    const trimmed = String(item ?? '').trim();
+    if (!trimmed) return;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    normalized.push(trimmed);
+  });
+
+  return normalized.sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
+}
+
+function normalizeApiKeyEntries(entries: VisualConfigApiKeyEntry[]): VisualConfigApiKeyEntry[] {
+  return entries
+    .map((entry, index) => {
+      const apiKey = String(entry.apiKey ?? '').trim();
+      if (!apiKey) return null;
+
+      return {
+        id: entry.id || `api-key-${index}-${makeClientId()}`,
+        apiKey,
+        disabledModels: normalizeUniqueStrings(entry.disabledModels ?? []),
+      };
+    })
+    .filter(Boolean) as VisualConfigApiKeyEntry[];
+}
+
+type ApiKeyModelsModalProps = {
+  open: boolean;
+  apiKeyEntry: VisualConfigApiKeyEntry | null;
+  disabled?: boolean;
+  onClose: () => void;
+  onSave: (disabledModels: string[]) => void;
+};
+
+function ApiKeyModelsModal({
+  open,
+  apiKeyEntry,
+  disabled = false,
+  onClose,
+  onSave,
+}: ApiKeyModelsModalProps) {
+  const { t } = useTranslation();
+  const apiBase = useAuthStore((state) => state.apiBase);
+  const [remoteModelNames, setRemoteModelNames] = useState<string[]>([]);
+  const [customModelNames, setCustomModelNames] = useState<string[]>([]);
+  const [draftDisabledModels, setDraftDisabledModels] = useState<string[]>([]);
+  const [manualModelName, setManualModelName] = useState('');
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    if (!open || !apiKeyEntry) return;
+    setDraftDisabledModels(normalizeUniqueStrings(apiKeyEntry.disabledModels ?? []));
+    setCustomModelNames([]);
+    setManualModelName('');
+  }, [apiKeyEntry, open]);
+
+  useEffect(() => {
+    if (!open || !apiKeyEntry?.apiKey || !apiBase) {
+      setRemoteModelNames([]);
+      setLoadingModels(false);
+      setLoadError('');
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingModels(true);
+    setLoadError('');
+
+    modelsApi
+      .fetchModels(apiBase, apiKeyEntry.apiKey)
+      .then((models) => {
+        if (cancelled) return;
+        setRemoteModelNames(normalizeUniqueStrings(models.map((model) => model.name)));
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        const message = error instanceof Error ? error.message : '';
+        setRemoteModelNames([]);
+        setLoadError(message);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setLoadingModels(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase, apiKeyEntry, open]);
+
+  const candidateModelNames = useMemo(
+    () =>
+      normalizeUniqueStrings([
+        ...remoteModelNames,
+        ...(apiKeyEntry?.disabledModels ?? []),
+        ...customModelNames,
+        ...draftDisabledModels,
+      ]),
+    [apiKeyEntry?.disabledModels, customModelNames, draftDisabledModels, remoteModelNames]
+  );
+
+  const disabledSet = useMemo(
+    () => new Set(draftDisabledModels.map((item) => item.toLowerCase())),
+    [draftDisabledModels]
+  );
+
+  const handleToggleModel = (modelName: string, enabled: boolean) => {
+    setDraftDisabledModels((prev) => {
+      const current = new Set(prev.map((item) => item.toLowerCase()));
+      if (enabled) {
+        current.delete(modelName.toLowerCase());
+      } else {
+        current.add(modelName.toLowerCase());
+      }
+
+      return candidateModelNames.filter((name) => current.has(name.toLowerCase()));
+    });
+  };
+
+  const handleAddManualModel = () => {
+    const trimmed = manualModelName.trim();
+    if (!trimmed) return;
+    setCustomModelNames((prev) => normalizeUniqueStrings([...prev, trimmed]));
+    setManualModelName('');
+  };
+
+  const handleSelectAll = () => {
+    setDraftDisabledModels([]);
+  };
+
+  const handleClearAll = () => {
+    setDraftDisabledModels(candidateModelNames);
+  };
+
+  const handleSave = () => {
+    onSave(normalizeUniqueStrings(draftDisabledModels));
+    onClose();
+  };
+
+  const loadedHint = loadingModels
+    ? t('config_management.visual.api_keys.models_loading')
+    : loadError
+      ? t('config_management.visual.api_keys.models_fetch_failed', { message: loadError })
+      : candidateModelNames.length > 0
+        ? t('config_management.visual.api_keys.models_loaded', { count: candidateModelNames.length })
+        : t('config_management.visual.api_keys.no_models_available');
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={t('config_management.visual.api_keys.models_title')}
+      width={680}
+      footer={
+        <>
+          <Button variant="secondary" onClick={handleSelectAll} disabled={disabled}>
+            {t('config_management.visual.api_keys.select_all')}
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={handleClearAll}
+            disabled={disabled || candidateModelNames.length === 0}
+          >
+            {t('config_management.visual.api_keys.clear_all')}
+          </Button>
+          <Button onClick={handleSave} disabled={disabled}>
+            {t('config_management.visual.api_keys.save_models')}
+          </Button>
+        </>
+      }
+    >
+      <div className={styles.apiKeyModelsModalBody}>
+        <div className={styles.apiKeyModelsSummary}>
+          <div className={styles.apiKeyModelsSummaryTitle}>
+            {maskApiKey(apiKeyEntry?.apiKey ?? '')}
+          </div>
+          <div className={styles.apiKeyModelsSummaryText}>
+            {t('config_management.visual.api_keys.models_hint')}
+          </div>
+          <div className={styles.apiKeyModelsStatus}>{loadedHint}</div>
+        </div>
+
+        <div className={styles.apiKeyModelsManualAdd}>
+          <input
+            className="input"
+            placeholder={t('config_management.visual.api_keys.manual_model_placeholder')}
+            value={manualModelName}
+            onChange={(event) => setManualModelName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                handleAddManualModel();
+              }
+            }}
+            disabled={disabled}
+          />
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={handleAddManualModel}
+            disabled={disabled || !manualModelName.trim()}
+          >
+            {t('config_management.visual.api_keys.add_model')}
+          </Button>
+        </div>
+
+        {candidateModelNames.length === 0 ? (
+          <div className={styles.emptyState}>
+            {loadError
+              ? t('config_management.visual.api_keys.models_manual_only')
+              : t('config_management.visual.api_keys.no_models_available')}
+          </div>
+        ) : (
+          <div className={styles.apiKeyModelsList}>
+            {candidateModelNames.map((modelName) => {
+              const enabled = !disabledSet.has(modelName.toLowerCase());
+              return (
+                <SelectionCheckbox
+                  key={modelName}
+                  checked={enabled}
+                  disabled={disabled}
+                  onChange={(value) => handleToggleModel(modelName, value)}
+                  className={styles.apiKeyModelItem}
+                  labelClassName={styles.apiKeyModelLabel}
+                  label={modelName}
+                />
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
   value,
   disabled,
   onChange,
 }: {
-  value: string;
+  value: VisualConfigApiKeyEntry[];
   disabled?: boolean;
-  onChange: (nextValue: string) => void;
+  onChange: (nextValue: VisualConfigApiKeyEntry[]) => void;
 }) {
   const { t } = useTranslation();
   const showNotification = useNotificationStore((state) => state.showNotification);
-  const apiKeys = useMemo(
-    () =>
-      value
-        .split('\n')
-        .map((key) => key.trim())
-        .filter(Boolean),
-    [value]
-  );
-  const [apiKeyIds, setApiKeyIds] = useState(() => apiKeys.map(() => makeClientId()));
-  const renderApiKeyIds = useMemo(() => {
-    if (apiKeyIds.length === apiKeys.length) return apiKeyIds;
-    if (apiKeyIds.length > apiKeys.length) return apiKeyIds.slice(0, apiKeys.length);
-    return [
-      ...apiKeyIds,
-      ...Array.from({ length: apiKeys.length - apiKeyIds.length }, () => makeClientId()),
-    ];
-  }, [apiKeyIds, apiKeys.length]);
+  const apiKeys = useMemo(() => normalizeApiKeyEntries(value), [value]);
 
   const apiKeyInputId = useId();
   const apiKeyHintId = `${apiKeyInputId}-hint`;
   const apiKeyErrorId = `${apiKeyInputId}-error`;
   const [modalOpen, setModalOpen] = useState(false);
+  const [modelsModalOpen, setModelsModalOpen] = useState(false);
   const [editingApiKeyId, setEditingApiKeyId] = useState<string | null>(null);
+  const [modelsApiKeyId, setModelsApiKeyId] = useState<string | null>(null);
   const [inputValue, setInputValue] = useState('');
   const [formError, setFormError] = useState('');
 
@@ -107,11 +338,16 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
   };
 
   const openEditModal = (apiKeyId: string) => {
-    const editingIndex = renderApiKeyIds.findIndex((id) => id === apiKeyId);
+    const editingIndex = apiKeys.findIndex((entry) => entry.id === apiKeyId);
     setEditingApiKeyId(apiKeyId);
-    setInputValue(apiKeys[editingIndex] ?? '');
+    setInputValue(apiKeys[editingIndex]?.apiKey ?? '');
     setFormError('');
     setModalOpen(true);
+  };
+
+  const openModelsModal = (apiKeyId: string) => {
+    setModelsApiKeyId(apiKeyId);
+    setModelsModalOpen(true);
   };
 
   const closeModal = () => {
@@ -121,14 +357,18 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
     setFormError('');
   };
 
-  const updateApiKeys = (nextKeys: string[]) => {
-    onChange(nextKeys.join('\n'));
+  const closeModelsModal = () => {
+    setModelsModalOpen(false);
+    setModelsApiKeyId(null);
+  };
+
+  const updateApiKeys = (nextKeys: VisualConfigApiKeyEntry[]) => {
+    onChange(normalizeApiKeyEntries(nextKeys));
   };
 
   const handleDelete = (apiKeyId: string) => {
-    const index = renderApiKeyIds.findIndex((id) => id === apiKeyId);
+    const index = apiKeys.findIndex((entry) => entry.id === apiKeyId);
     if (index < 0) return;
-    setApiKeyIds(renderApiKeyIds.filter((id) => id !== apiKeyId));
     updateApiKeys(apiKeys.filter((_, i) => i !== index));
   };
 
@@ -144,15 +384,14 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
     }
 
     const editingIndex = editingApiKeyId
-      ? renderApiKeyIds.findIndex((id) => id === editingApiKeyId)
+      ? apiKeys.findIndex((entry) => entry.id === editingApiKeyId)
       : -1;
-    const nextKeys =
+    const nextKeys: VisualConfigApiKeyEntry[] =
       editingApiKeyId === null
-        ? [...apiKeys, trimmed]
-        : apiKeys.map((key, idx) => (idx === editingIndex ? trimmed : key));
-    if (editingApiKeyId === null) {
-      setApiKeyIds([...renderApiKeyIds, makeClientId()]);
-    }
+        ? [...apiKeys, { id: makeClientId(), apiKey: trimmed, disabledModels: [] }]
+        : apiKeys.map((entry, idx) =>
+            idx === editingIndex ? { ...entry, apiKey: trimmed } : entry
+          );
     updateApiKeys(nextKeys);
     closeModal();
   };
@@ -170,6 +409,17 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
     setFormError('');
   };
 
+  const handleSaveDisabledModels = (disabledModels: string[]) => {
+    if (!modelsApiKeyId) return;
+    updateApiKeys(
+      apiKeys.map((entry) =>
+        entry.id === modelsApiKeyId ? { ...entry, disabledModels } : entry
+      )
+    );
+  };
+
+  const modelsTargetEntry = apiKeys.find((entry) => entry.id === modelsApiKeyId) ?? null;
+
   return (
     <div className="form-group" style={{ marginBottom: 0 }}>
       <div className={styles.blockHeaderRow}>
@@ -183,20 +433,37 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
         <div className={styles.emptyState}>{t('config_management.visual.api_keys.empty')}</div>
       ) : (
         <div className="item-list" style={{ marginTop: 4 }}>
-          {apiKeys.map((key, index) => (
-            <div key={renderApiKeyIds[index] ?? `${key}-${index}`} className="item-row">
+          {apiKeys.map((entry, index) => (
+            <div key={entry.id} className="item-row">
               <div className="item-meta">
                 <div className="pill">#{index + 1}</div>
                 <div className="item-title">
                   {t('config_management.visual.api_keys.input_label')}
                 </div>
-                <div className="item-subtitle">{maskApiKey(String(key || ''))}</div>
+                <div className="item-subtitle">{maskApiKey(entry.apiKey)}</div>
+                <div className={styles.apiKeyCardMetaRow}>
+                  <span className={styles.apiKeyCardMetaLabel}>
+                    {entry.disabledModels.length > 0
+                      ? t('config_management.visual.api_keys.disabled_models_count', {
+                          count: entry.disabledModels.length,
+                        })
+                      : t('config_management.visual.api_keys.all_models_enabled')}
+                  </span>
+                </div>
               </div>
               <div className="item-actions">
                 <Button
                   variant="secondary"
                   size="sm"
-                  onClick={() => handleCopy(key)}
+                  onClick={() => openModelsModal(entry.id)}
+                  disabled={disabled}
+                >
+                  {t('config_management.visual.api_keys.configure_models')}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => handleCopy(entry.apiKey)}
                   disabled={disabled}
                 >
                   {t('common.copy')}
@@ -204,7 +471,7 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
                 <Button
                   variant="secondary"
                   size="sm"
-                  onClick={() => openEditModal(renderApiKeyIds[index] ?? '')}
+                  onClick={() => openEditModal(entry.id)}
                   disabled={disabled}
                 >
                   {t('config_management.visual.common.edit')}
@@ -212,7 +479,7 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
                 <Button
                   variant="danger"
                   size="sm"
-                  onClick={() => handleDelete(renderApiKeyIds[index] ?? '')}
+                  onClick={() => handleDelete(entry.id)}
                   disabled={disabled}
                 >
                   {t('config_management.visual.common.delete')}
@@ -281,6 +548,14 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
           )}
         </div>
       </Modal>
+
+      <ApiKeyModelsModal
+        open={modelsModalOpen}
+        apiKeyEntry={modelsTargetEntry}
+        disabled={disabled}
+        onClose={closeModelsModal}
+        onSave={handleSaveDisabledModels}
+      />
     </div>
   );
 });

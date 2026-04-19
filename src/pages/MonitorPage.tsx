@@ -124,20 +124,6 @@ export function MonitorPage() {
       const vertexConfigs = snapshot.vertexConfigs;
       const authFiles = snapshot.authFiles;
 
-      const openaiProvidersForSourceInfo = [
-        ...openaiProviders,
-        ...snapshot.disabledOpenAIEntries.map((entry) => ({
-          name: entry.provider.name,
-          baseUrl: entry.provider.baseUrl,
-          prefix: entry.provider.prefix,
-          headers: entry.provider.headers,
-          models: entry.provider.models,
-          priority: entry.provider.priority,
-          testModel: entry.provider.testModel,
-          apiKeyEntries: [entry.entry],
-        })),
-      ];
-
       openaiProviders.forEach((provider) => {
         const providerName = provider.headers?.['X-Provider'] || provider.name || 'unknown';
         const modelSet = new Set<string>();
@@ -158,20 +144,6 @@ export function MonitorPage() {
           modelsMap[provider.name] = modelSet;
           typeMap[provider.name] = 'OpenAI';
         }
-      });
-
-      snapshot.disabledOpenAIEntries.forEach((entry) => {
-        const providerName = entry.provider.headers?.['X-Provider'] || entry.provider.name || 'unknown';
-        const apiKey = entry.entry.apiKey;
-        if (!apiKey) return;
-        const modelSet = new Set<string>();
-        (entry.provider.models || []).forEach((model) => {
-          if (model.alias) modelSet.add(model.alias);
-          if (model.name) modelSet.add(model.name);
-        });
-        map[apiKey] = providerName;
-        modelsMap[apiKey] = modelSet;
-        typeMap[apiKey] = 'OpenAI';
       });
 
       geminiKeys.forEach((config) => {
@@ -235,7 +207,7 @@ export function MonitorPage() {
           claudeApiKeys: claudeConfigs,
           codexApiKeys: codexConfigs,
           vertexApiKeys: vertexConfigs,
-          openaiCompatibility: openaiProvidersForSourceInfo,
+          openaiCompatibility: openaiProviders,
         })
       );
 

@@ -2,12 +2,20 @@ import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNotificationStore, useAuthStore } from '@/stores';
 import { configApi, usageApi, webuiDataApi } from '@/services/api';
+import { LOCAL_STATE_EXCLUDED_KEYS } from '@/services/localPersistence';
 import { readQuotaSnapshotRaw, writeQuotaSnapshotRaw } from '@/services/quotaSnapshot';
 import { collectUsageDetails } from '@/utils/usage';
 import { webdavClient } from '../client/webdavClient';
 import { useWebdavStore } from '../store/useWebdavStore';
 import type { BackupPayload, BackupData, BackupScope, WebdavFileInfo } from '../types';
-import { BACKUP_LOCALSTORAGE_KEYS, LATEST_LOCAL_BACKUP_PATH } from '../constants';
+import { LATEST_LOCAL_BACKUP_PATH } from '../constants';
+import {
+  deleteLocalBackup,
+  listLocalBackups,
+  readLocalBackup,
+  saveLocalBackup,
+  type LocalBackupFileInfo,
+} from '../localBackup';
 import {
   generateBackupFilename,
   isBackupFile,
@@ -28,7 +36,9 @@ async function collectBackupData(scope: BackupScope): Promise<BackupData> {
 
   if (scope.localStorage) {
     const lsData: Record<string, string> = {};
-    for (const key of BACKUP_LOCALSTORAGE_KEYS) {
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (!key || LOCAL_STATE_EXCLUDED_KEYS.has(key)) continue;
       const val = localStorage.getItem(key);
       if (val !== null) lsData[key] = val;
     }
@@ -116,10 +126,6 @@ const parseBackupPayload = (raw: string): BackupPayload => {
   return payload;
 };
 
-async function writeLatestLocalBackup(payloadJson: string): Promise<void> {
-  await webuiDataApi.writeTextFile(LATEST_LOCAL_BACKUP_PATH, payloadJson);
-}
-
 async function readLatestLocalBackupPayload(): Promise<BackupPayload | null> {
   try {
     const raw = await webuiDataApi.readTextFile(LATEST_LOCAL_BACKUP_PATH);
@@ -127,17 +133,6 @@ async function readLatestLocalBackupPayload(): Promise<BackupPayload | null> {
   } catch (error) {
     if (webuiDataApi.isNotFoundError(error)) {
       return null;
-    }
-    throw error;
-  }
-}
-
-async function deleteLatestLocalBackup(): Promise<void> {
-  try {
-    await webuiDataApi.deletePath(LATEST_LOCAL_BACKUP_PATH);
-  } catch (error) {
-    if (webuiDataApi.isNotFoundError(error)) {
-      return;
     }
     throw error;
   }
@@ -174,67 +169,84 @@ export function useBackupActions() {
   const { t } = useTranslation();
   const { showNotification } = useNotificationStore();
 
+  const loadLocalHistory = useCallback(async (): Promise<LocalBackupFileInfo[]> => {
+    try {
+      return await listLocalBackups();
+    } catch (err) {
+      console.error('[Local Backup] List failed:', err);
+      const msg = err instanceof Error ? err.message : String(err);
+      showNotification(`${t('backup.list_failed')}: ${msg}`, 'error');
+      return [];
+    }
+  }, [showNotification, t]);
+
   const performBackup = useCallback(
     async ({ throwOnError = false }: { throwOnError?: boolean } = {}) => {
       const { connection, backupScope, maxBackupCount, setIsBackingUp, setLastBackupTime } =
         useWebdavStore.getState();
-      if (!connection.serverUrl) {
-        const error = new Error(t('backup.error_no_connection'));
-        showNotification(error.message, 'error');
-        if (throwOnError) {
-          throw error;
-        }
-        return false;
-      }
 
       setIsBackingUp(true);
       try {
-        await webdavClient.ensureDirectory(connection);
         const data = await collectBackupData(backupScope);
         const payload = buildPayload(data);
         const filename = generateBackupFilename();
         const payloadJson = JSON.stringify(payload, null, 2);
-        await webdavClient.putFile(connection, filename, payloadJson);
-        try {
-          await writeLatestLocalBackup(payloadJson);
-        } catch (mirrorError) {
-          console.warn('[WebDAV Backup] Failed to update latest local backup mirror:', mirrorError);
-        }
-        const now = new Date().toISOString();
-        setLastBackupTime(now);
-        showNotification(t('backup.backup_success'), 'success');
 
-        // 自动清理：超出最大备份数时删除最旧的文件
-        if (maxBackupCount > 0) {
+        await saveLocalBackup(filename, payloadJson, maxBackupCount);
+
+        let remoteError: Error | null = null;
+        if (connection.serverUrl) {
           try {
-            const files = await webdavClient.listDirectory(connection);
-            const backupFiles = files
-              .filter((f) => !f.isCollection && isBackupFile(f.displayName))
-              .sort((a, b) => {
-                const da = new Date(a.lastModified).getTime() || 0;
-                const db = new Date(b.lastModified).getTime() || 0;
-                return db - da;
-              });
-            if (backupFiles.length > maxBackupCount) {
-              const toDelete = backupFiles.slice(maxBackupCount);
-              let deleted = 0;
-              for (const f of toDelete) {
-                try {
-                  await webdavClient.deleteFile(connection, f.displayName);
-                  deleted++;
-                } catch (delErr) {
-                  console.warn(`[WebDAV Backup] Failed to delete ${f.displayName}:`, delErr);
+            await webdavClient.ensureDirectory(connection);
+            await webdavClient.putFile(connection, filename, payloadJson);
+
+            if (maxBackupCount > 0) {
+              try {
+                const files = await webdavClient.listDirectory(connection);
+                const backupFiles = files
+                  .filter((f) => !f.isCollection && isBackupFile(f.displayName))
+                  .sort((a, b) => {
+                    const da = new Date(a.lastModified).getTime() || 0;
+                    const db = new Date(b.lastModified).getTime() || 0;
+                    return db - da;
+                  });
+                if (backupFiles.length > maxBackupCount) {
+                  const toDelete = backupFiles.slice(maxBackupCount);
+                  let deleted = 0;
+                  for (const f of toDelete) {
+                    try {
+                      await webdavClient.deleteFile(connection, f.displayName);
+                      deleted++;
+                    } catch (delErr) {
+                      console.warn(`[WebDAV Backup] Failed to delete ${f.displayName}:`, delErr);
+                    }
+                  }
+                  if (deleted > 0) {
+                    console.log(
+                      `[WebDAV Backup] Cleaned up ${deleted}/${toDelete.length} old backup(s)`
+                    );
+                  }
                 }
-              }
-              if (deleted > 0) {
-                console.log(
-                  `[WebDAV Backup] Cleaned up ${deleted}/${toDelete.length} old backup(s)`
-                );
+              } catch (cleanupErr) {
+                console.warn('[WebDAV Backup] Cleanup failed:', cleanupErr);
               }
             }
-          } catch (cleanupErr) {
-            console.warn('[WebDAV Backup] Cleanup failed:', cleanupErr);
+          } catch (err) {
+            remoteError = err instanceof Error ? err : new Error(String(err));
+            console.warn('[WebDAV Backup] Remote backup failed after local success:', err);
           }
+        }
+
+        const now = new Date().toISOString();
+        setLastBackupTime(now);
+
+        if (remoteError) {
+          showNotification(
+            t('backup.backup_partial_success', { message: remoteError.message }),
+            'warning'
+          );
+        } else {
+          showNotification(t('backup.backup_success'), 'success');
         }
 
         return true;
@@ -326,21 +338,31 @@ export function useBackupActions() {
     [t, showNotification]
   );
 
+  const downloadLocalFile = useCallback(
+    async (filename: string) => {
+      try {
+        const content = await readLocalBackup(filename);
+        const blob = new Blob([content], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        console.error('[Local Backup] Download failed:', err);
+        const msg = err instanceof Error ? err.message : String(err);
+        showNotification(`${t('backup.download_failed')}: ${msg}`, 'error');
+      }
+    },
+    [showNotification, t]
+  );
+
   const deleteRemote = useCallback(
-    async (filename: string, syncLatestLocal = false) => {
+    async (filename: string) => {
       const { connection } = useWebdavStore.getState();
       try {
         await webdavClient.deleteFile(connection, filename);
-        if (syncLatestLocal) {
-          try {
-            await deleteLatestLocalBackup();
-          } catch (mirrorError) {
-            console.warn(
-              '[WebDAV Backup] Failed to delete latest local backup mirror:',
-              mirrorError
-            );
-          }
-        }
         showNotification(t('backup.delete_success'), 'success');
       } catch (err) {
         console.error('[WebDAV Backup] Delete failed:', err);
@@ -349,6 +371,20 @@ export function useBackupActions() {
       }
     },
     [t, showNotification]
+  );
+
+  const deleteLocal = useCallback(
+    async (filename: string) => {
+      try {
+        await deleteLocalBackup(filename);
+        showNotification(t('backup.delete_success'), 'success');
+      } catch (err) {
+        console.error('[Local Backup] Delete failed:', err);
+        const msg = err instanceof Error ? err.message : String(err);
+        showNotification(`${t('backup.delete_failed')}: ${msg}`, 'error');
+      }
+    },
+    [showNotification, t]
   );
 
   const restore = useCallback(
@@ -375,6 +411,32 @@ export function useBackupActions() {
       }
     },
     [t, showNotification]
+  );
+
+  const restoreLocalBackup = useCallback(
+    async (filename: string, scope: BackupScope) => {
+      const { setIsRestoring } = useWebdavStore.getState();
+      setIsRestoring(true);
+      try {
+        const text = await readLocalBackup(filename);
+        const payload: BackupPayload = JSON.parse(text);
+
+        if (payload.format !== 'cpamc-backup' || (payload.version !== 1 && payload.version !== 2)) {
+          showNotification(t('backup.invalid_format'), 'error');
+          return;
+        }
+
+        await applyRestore(payload, scope);
+        showNotification(t('backup.restore_success'), 'success');
+      } catch (err) {
+        console.error('[Local Backup] Restore failed:', err);
+        const msg = err instanceof Error ? err.message : String(err);
+        showNotification(`${t('backup.restore_failed')}: ${msg}`, 'error');
+      } finally {
+        setIsRestoring(false);
+      }
+    },
+    [showNotification, t]
   );
 
   const restoreFromLocal = useCallback(
@@ -407,10 +469,14 @@ export function useBackupActions() {
     backup,
     backupOrThrow,
     exportLocal,
+    loadLocalHistory,
     loadHistory,
     downloadFile,
+    downloadLocalFile,
+    deleteLocal,
     deleteRemote,
     restore,
+    restoreLocalBackup,
     restoreFromLocal,
   };
 }

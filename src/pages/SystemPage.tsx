@@ -15,7 +15,7 @@ import {
 } from '@/stores';
 import { configApi, managementApi } from '@/services/api';
 import { apiKeysApi } from '@/services/api/apiKeys';
-import { classifyModels } from '@/utils/models';
+import { classifyModels, mergeModelLists } from '@/utils/models';
 import { STORAGE_KEY_AUTH } from '@/utils/constants';
 import { INLINE_LOGO_JPEG } from '@/assets/logoInline';
 import iconGemini from '@/assets/icons/gemini.svg';
@@ -128,11 +128,47 @@ export function SystemPage() {
   const versionTapCount = useRef(0);
   const versionTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const configuredDisabledModelNames = useMemo(() => {
+    const raw = config?.raw?.['api-key-models'];
+    if (!Array.isArray(raw)) return [];
+
+    const seen = new Set<string>();
+    const names: string[] = [];
+
+    raw.forEach((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
+      const record = entry as Record<string, unknown>;
+      const disabledModels = Array.isArray(record['disabled-models'])
+        ? record['disabled-models']
+        : Array.isArray(record.disabledModels)
+          ? record.disabledModels
+          : [];
+
+      disabledModels.forEach((item) => {
+        const trimmed = String(item ?? '').trim();
+        if (!trimmed) return;
+        const key = trimmed.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        names.push(trimmed);
+      });
+    });
+
+    return names;
+  }, [config?.raw]);
+
   const otherLabel = useMemo(
     () => (i18n.language?.toLowerCase().startsWith('zh') ? '其他' : 'Other'),
     [i18n.language]
   );
-  const groupedModels = useMemo(() => classifyModels(models, { otherLabel }), [models, otherLabel]);
+  const visibleModels = useMemo(
+    () => mergeModelLists(models, configuredDisabledModelNames),
+    [configuredDisabledModelNames, models]
+  );
+  const groupedModels = useMemo(
+    () => classifyModels(visibleModels, { otherLabel }),
+    [otherLabel, visibleModels]
+  );
   const requestLogEnabled = config?.requestLog ?? false;
   const requestLogDirty = requestLogDraft !== requestLogEnabled;
   const canEditRequestLog = auth.connectionStatus === 'connected' && Boolean(config);
@@ -227,7 +263,9 @@ export function SystemPage() {
       setModelStatus({
         type: hasModels ? 'success' : 'warning',
         message: hasModels
-          ? t('system_info.models_count', { count: list.length })
+          ? t('system_info.models_count', {
+              count: mergeModelLists(list, configuredDisabledModelNames).length,
+            })
           : t('system_info.models_empty'),
       });
     } catch (err: unknown) {
@@ -507,7 +545,7 @@ export function SystemPage() {
           {modelsError && <div className="error-box">{modelsError}</div>}
           {modelsLoading ? (
             <div className="hint">{t('common.loading')}</div>
-          ) : models.length === 0 ? (
+          ) : visibleModels.length === 0 ? (
             <div className="hint">{t('system_info.models_empty')}</div>
           ) : (
             <div className="item-list">

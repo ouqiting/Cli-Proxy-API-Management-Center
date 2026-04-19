@@ -138,15 +138,7 @@ const buildResolutionIndexes = (snapshot: CredentialDisableSnapshot | null): Res
 
   snapshot.openaiProviders.forEach((provider) => {
     const providerKey = buildOpenAIProviderKey(provider.name, provider.baseUrl);
-    openAIProviderCounts.set(
-      providerKey,
-      (openAIProviderCounts.get(providerKey) ?? 0) + (provider.apiKeyEntries || []).length
-    );
-  });
-
-  snapshot.disabledOpenAIEntries.forEach((entry) => {
-    const providerKey = buildOpenAIProviderKey(entry.provider.name, entry.provider.baseUrl);
-    openAIProviderCounts.set(providerKey, (openAIProviderCounts.get(providerKey) ?? 0) + 1);
+    openAIProviderCounts.set(providerKey, (openAIProviderCounts.get(providerKey) ?? 0) + (provider.apiKeyEntries || []).length);
   });
 
   const addOpenAITarget = (
@@ -184,20 +176,14 @@ const buildResolutionIndexes = (snapshot: CredentialDisableSnapshot | null): Res
     (provider.apiKeyEntries || []).forEach((entry) => {
       const apiKey = String(entry.apiKey ?? '').trim();
       if (!apiKey) return;
-      addOpenAITarget(provider.name, provider.baseUrl, provider.prefix, apiKey, false);
+      addOpenAITarget(
+        provider.name,
+        provider.baseUrl,
+        provider.prefix,
+        apiKey,
+        entry.disabled === true
+      );
     });
-  });
-
-  snapshot.disabledOpenAIEntries.forEach((entry) => {
-    const apiKey = String(entry.entry.apiKey ?? '').trim();
-    if (!apiKey) return;
-    addOpenAITarget(
-      entry.provider.name,
-      entry.provider.baseUrl,
-      entry.provider.prefix,
-      apiKey,
-      true
-    );
   });
 
   return { byAuthIndex, bySourceId };

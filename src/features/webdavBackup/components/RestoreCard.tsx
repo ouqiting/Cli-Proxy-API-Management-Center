@@ -10,12 +10,22 @@ import { useBackupActions } from '../hooks/useBackupActions';
 import { formatFileSize } from '../utils';
 import type { WebdavFileInfo, BackupScope } from '../types';
 import { RestoreModal } from './RestoreModal';
+import type { LocalBackupFileInfo } from '../localBackup';
 
 export function RestoreCard() {
   const { t } = useTranslation();
   const { showConfirmation } = useNotificationStore();
-  const { loadHistory, restoreFromLocal, restore, downloadFile, deleteRemote } =
-    useBackupActions();
+  const {
+    loadHistory,
+    loadLocalHistory,
+    restoreFromLocal,
+    restore,
+    restoreLocalBackup,
+    downloadFile,
+    downloadLocalFile,
+    deleteRemote,
+    deleteLocal,
+  } = useBackupActions();
 
   const isRestoring = useWebdavStore((s) => s.isRestoring);
   const isLoadingHistory = useWebdavStore((s) => s.isLoadingHistory);
@@ -23,19 +33,21 @@ export function RestoreCard() {
   const serverUrl = useWebdavStore((s) => s.connection.serverUrl);
   const lastBackupTime = useWebdavStore((s) => s.lastBackupTime);
 
+  const [localFiles, setLocalFiles] = useState<LocalBackupFileInfo[]>([]);
   const [files, setFiles] = useState<WebdavFileInfo[]>([]);
+  const [restoreLocalTarget, setRestoreLocalTarget] = useState<string | null>(null);
   const [restoreTarget, setRestoreTarget] = useState<string | null>(null);
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
-    if (!serverUrl) {
-      setFiles([]);
-      return;
-    }
-    const result = await loadHistory();
-    setFiles(result);
-  }, [serverUrl, loadHistory]);
+    const [localResult, remoteResult] = await Promise.all([
+      loadLocalHistory(),
+      serverUrl ? loadHistory() : Promise.resolve([]),
+    ]);
+    setLocalFiles(localResult);
+    setFiles(remoteResult);
+  }, [loadHistory, loadLocalHistory, serverUrl]);
 
   // 初始加载 + 备份成功后自动刷新列表
   useEffect(() => {
@@ -47,12 +59,15 @@ export function RestoreCard() {
       if (restoreFile) {
         await restoreFromLocal(restoreFile, scope);
         setRestoreFile(null);
+      } else if (restoreLocalTarget) {
+        await restoreLocalBackup(restoreLocalTarget, scope);
+        setRestoreLocalTarget(null);
       } else if (restoreTarget) {
         await restore(restoreTarget, scope);
       }
       setRestoreTarget(null);
     },
-    [restoreTarget, restoreFile, restore, restoreFromLocal],
+    [restoreFile, restore, restoreFromLocal, restoreLocalBackup, restoreLocalTarget, restoreTarget],
   );
 
   const handleFileSelected = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -64,19 +79,23 @@ export function RestoreCard() {
   }, []);
 
   const handleDelete = useCallback(
-    (filename: string, syncLatestLocal: boolean) => {
+    (filename: string, source: 'local' | 'cloud') => {
       showConfirmation({
         title: t('backup.delete_confirm_title'),
         message: t('backup.delete_confirm_message', { name: filename }),
         confirmText: t('common.delete'),
         variant: 'danger',
         onConfirm: async () => {
-          await deleteRemote(filename, syncLatestLocal);
+          if (source === 'local') {
+            await deleteLocal(filename);
+          } else {
+            await deleteRemote(filename);
+          }
           await refresh();
         },
       });
     },
-    [showConfirmation, deleteRemote, refresh, t],
+    [showConfirmation, deleteLocal, deleteRemote, refresh, t],
   );
 
   return (
@@ -121,83 +140,152 @@ export function RestoreCard() {
             </Button>
           </div>
 
-          {/* 备份历史列表 */}
           {isHydrating ? (
             <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}>
               <LoadingSpinner />
             </div>
-          ) : !serverUrl ? (
-            <div style={{ fontSize: 12, opacity: 0.5, textAlign: 'center', padding: 16 }}>
-              {t('backup.restore_no_connection')}
-            </div>
-          ) : isLoadingHistory ? (
-            <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}>
-              <LoadingSpinner />
-            </div>
-          ) : files.length === 0 ? (
-            <EmptyState title={t('backup.no_backups')} />
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {files.map((file, index) => (
-                <div
-                  key={file.href}
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    padding: '8px 0',
-                    borderBottom: '1px solid var(--border)',
-                  }}
-                >
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span style={{ fontWeight: 500, fontSize: 14 }}>{file.displayName}</span>
-                      <span
-                        style={{
-                          fontSize: 11,
-                          padding: '1px 6px',
-                          borderRadius: 4,
-                          background: 'var(--accent-alpha, rgba(59,130,246,0.1))',
-                          color: 'var(--accent, #3b82f6)',
-                          lineHeight: '18px',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {t('backup.source_cloud')}
-                      </span>
+            <>
+              {localFiles.length === 0 ? (
+                <EmptyState title={t('backup.no_local_backups')} />
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {localFiles.map((file) => (
+                    <div
+                      key={file.filename}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        padding: '8px 0',
+                        borderBottom: '1px solid var(--border)',
+                      }}
+                    >
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ fontWeight: 500, fontSize: 14 }}>{file.filename}</span>
+                          <span
+                            style={{
+                              fontSize: 11,
+                              padding: '1px 6px',
+                              borderRadius: 4,
+                              background: 'rgba(16, 185, 129, 0.12)',
+                              color: '#059669',
+                              lineHeight: '18px',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {t('backup.source_local')}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 12, opacity: 0.6 }}>
+                          {file.createdAt ? new Date(file.createdAt).toLocaleString() : ''}
+                          {file.size > 0 ? ` · ${formatFileSize(file.size)}` : ''}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setRestoreLocalTarget(file.filename)}
+                          disabled={isRestoring}
+                        >
+                          {t('backup.restore')}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => downloadLocalFile(file.filename)}
+                        >
+                          {t('backup.download')}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDelete(file.filename, 'local')}
+                        >
+                          {t('common.delete')}
+                        </Button>
+                      </div>
                     </div>
-                    <div style={{ fontSize: 12, opacity: 0.6 }}>
-                      {file.lastModified ? new Date(file.lastModified).toLocaleString() : ''}
-                      {file.contentLength > 0 ? ` · ${formatFileSize(file.contentLength)}` : ''}
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: 4 }}>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setRestoreTarget(file.displayName)}
-                      disabled={isRestoring}
-                    >
-                      {t('backup.restore')}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => downloadFile(file.displayName)}
-                    >
-                      {t('backup.download')}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleDelete(file.displayName, index === 0)}
-                    >
-                      {t('common.delete')}
-                    </Button>
-                  </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              )}
+
+              {!serverUrl ? (
+                <div style={{ fontSize: 12, opacity: 0.5, textAlign: 'center', paddingTop: 8 }}>
+                  {t('backup.restore_no_connection')}
+                </div>
+              ) : isLoadingHistory ? (
+                <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}>
+                  <LoadingSpinner />
+                </div>
+              ) : files.length === 0 ? (
+                <EmptyState title={t('backup.no_cloud_backups')} />
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {files.map((file) => (
+                    <div
+                      key={file.href}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        padding: '8px 0',
+                        borderBottom: '1px solid var(--border)',
+                      }}
+                    >
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ fontWeight: 500, fontSize: 14 }}>{file.displayName}</span>
+                          <span
+                            style={{
+                              fontSize: 11,
+                              padding: '1px 6px',
+                              borderRadius: 4,
+                              background: 'var(--accent-alpha, rgba(59,130,246,0.1))',
+                              color: 'var(--accent, #3b82f6)',
+                              lineHeight: '18px',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {t('backup.source_cloud')}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 12, opacity: 0.6 }}>
+                          {file.lastModified ? new Date(file.lastModified).toLocaleString() : ''}
+                          {file.contentLength > 0 ? ` · ${formatFileSize(file.contentLength)}` : ''}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setRestoreTarget(file.displayName)}
+                          disabled={isRestoring}
+                        >
+                          {t('backup.restore')}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => downloadFile(file.displayName)}
+                        >
+                          {t('backup.download')}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDelete(file.displayName, 'cloud')}
+                        >
+                          {t('common.delete')}
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
       </Card>
@@ -211,14 +299,15 @@ export function RestoreCard() {
       />
 
       <RestoreModal
-        open={restoreTarget !== null || restoreFile !== null}
+        open={restoreLocalTarget !== null || restoreTarget !== null || restoreFile !== null}
         onClose={() => {
+          setRestoreLocalTarget(null);
           setRestoreTarget(null);
           setRestoreFile(null);
         }}
         onRestore={handleRestore}
         loading={isRestoring}
-        filename={restoreFile?.name ?? restoreTarget ?? ''}
+        filename={restoreFile?.name ?? restoreLocalTarget ?? restoreTarget ?? ''}
       />
     </>
   );

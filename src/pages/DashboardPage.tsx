@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/icons';
 import { useAuthStore, useConfigStore, useModelsStore } from '@/stores';
 import { apiKeysApi, providersApi, authFilesApi } from '@/services/api';
+import { mergeModelLists } from '@/utils/models';
 import styles from './DashboardPage.module.scss';
 
 interface QuickStat {
@@ -57,6 +58,40 @@ export function DashboardPage() {
   const [loading, setLoading] = useState(true);
 
   const apiKeysCache = useRef<string[]>([]);
+
+  const configuredDisabledModelNames = useMemo(() => {
+    const raw = config?.raw?.['api-key-models'];
+    if (!Array.isArray(raw)) return [];
+
+    const seen = new Set<string>();
+    const names: string[] = [];
+
+    raw.forEach((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
+      const record = entry as Record<string, unknown>;
+      const disabledModels = Array.isArray(record['disabled-models'])
+        ? record['disabled-models']
+        : Array.isArray(record.disabledModels)
+          ? record.disabledModels
+          : [];
+
+      disabledModels.forEach((item) => {
+        const trimmed = String(item ?? '').trim();
+        if (!trimmed) return;
+        const key = trimmed.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        names.push(trimmed);
+      });
+    });
+
+    return names;
+  }, [config?.raw]);
+
+  const visibleModels = useMemo(
+    () => mergeModelLists(models, configuredDisabledModelNames),
+    [configuredDisabledModelNames, models]
+  );
 
   useEffect(() => {
     apiKeysCache.current = [];
@@ -213,7 +248,7 @@ export function DashboardPage() {
     },
     {
       label: t('dashboard.available_models'),
-      value: modelsLoading ? '-' : models.length,
+      value: modelsLoading ? '-' : visibleModels.length,
       icon: <IconSatellite size={24} />,
       path: '/system',
       loading: modelsLoading,

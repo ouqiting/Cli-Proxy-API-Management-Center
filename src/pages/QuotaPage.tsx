@@ -258,7 +258,6 @@ export function QuotaPage() {
   const setVercelQuota = useQuotaStore((state) => state.setVercelQuota);
   const setGeminiCliQuota = useQuotaStore((state) => state.setGeminiCliQuota);
   const setKimiQuota = useQuotaStore((state) => state.setKimiQuota);
-  const disabledCredentialsSnapshot = useDisabledCredentialsStore((state) => state.snapshot);
   const refreshDisabledCredentialsSnapshot = useDisabledCredentialsStore(
     (state) => state.refreshSnapshot
   );
@@ -285,7 +284,7 @@ export function QuotaPage() {
           name: `${providerName} - Key #${entryIndex + 1} (${maskedKey})`,
           type: 'vercel',
           provider: 'vercel',
-          disabled: false,
+          disabled: entry.disabled === true,
           apiKey,
           providerName,
           providerBaseUrl: provider.baseUrl,
@@ -295,33 +294,8 @@ export function QuotaPage() {
       });
     });
 
-    (disabledCredentialsSnapshot?.disabledOpenAIEntries || []).forEach((entry, entryIndex) => {
-      const normalizedBaseUrl = normalizeQuotaOpenAIBaseUrl(entry.provider.baseUrl);
-      if (normalizedBaseUrl !== VERCEL_GATEWAY_BASE_URL) {
-        return;
-      }
-
-      const apiKey = String(entry.entry.apiKey ?? '').trim();
-      if (!apiKey) return;
-
-      const providerName =
-        String(entry.provider.name ?? '').trim() || `Vercel Disabled #${entryIndex + 1}`;
-      const maskedKey = maskApiKey(apiKey);
-      items.push({
-        name: `${providerName} - Key (${maskedKey})`,
-        type: 'vercel',
-        provider: 'vercel',
-        disabled: true,
-        apiKey,
-        providerName,
-        providerBaseUrl: entry.provider.baseUrl,
-        providerHeaders: entry.provider.headers ?? {},
-        entryHeaders: entry.entry.headers ?? {},
-      });
-    });
-
     return items;
-  }, [disabledCredentialsSnapshot?.disabledOpenAIEntries, openAIProviders]);
+  }, [openAIProviders]);
 
   const vercelTotalBalance = useMemo(() => {
     const values = Object.values(vercelQuota);
@@ -331,6 +305,37 @@ export function QuotaPage() {
     if (successful.length === 0) return null;
     return successful.reduce((sum, item) => sum + (item.balance ?? 0), 0);
   }, [vercelQuota]);
+
+  const sortedVercelFiles = useMemo(() => {
+    return [...vercelFiles].sort((a, b) => {
+      const quotaA = vercelQuota[a.name];
+      const quotaB = vercelQuota[b.name];
+      const balanceA =
+        quotaA?.status === 'success' && typeof quotaA.balance === 'number' ? quotaA.balance : null;
+      const balanceB =
+        quotaB?.status === 'success' && typeof quotaB.balance === 'number' ? quotaB.balance : null;
+
+      // 规则：余额不为0且大于0的按余额从小到大排在前面，余额<=0的排在后面，查询失败的排在最后
+      const getPriority = (balance: number | null): number => {
+        if (balance === null) return 3; // 查询失败
+        if (balance <= 0) return 2; // 余额耗尽（包含负数）
+        return 1; // 余额大于0
+      };
+
+      const priorityA = getPriority(balanceA);
+      const priorityB = getPriority(balanceB);
+
+      if (priorityA !== priorityB) {
+        return priorityA - priorityB;
+      }
+
+      if (priorityA === 1 && balanceA !== null && balanceB !== null) {
+        return balanceA - balanceB;
+      }
+
+      return a.name.localeCompare(b.name);
+    });
+  }, [vercelFiles, vercelQuota]);
 
   const codexFiles = useMemo(
     () =>
@@ -558,7 +563,25 @@ export function QuotaPage() {
       try {
         await setCredentialDisabledState(target, !target.disabled);
         if (target.kind === 'openai_api_key_entry') {
-          await Promise.all([loadOpenAIProviders(), refreshDisabledCredentialsSnapshot(true)]);
+          setOpenAIProviders((prev) =>
+            prev.map((provider) => {
+              if (
+                provider.name !== target.providerName ||
+                provider.baseUrl !== target.providerBaseUrl
+              ) {
+                return provider;
+              }
+
+              return {
+                ...provider,
+                apiKeyEntries: (provider.apiKeyEntries || []).map((entry) =>
+                  entry.apiKey === target.apiKey
+                    ? { ...entry, disabled: !target.disabled }
+                    : entry
+                ),
+              };
+            })
+          );
         } else {
           await Promise.all([loadFiles(), refreshDisabledCredentialsSnapshot(true)]);
         }
@@ -583,9 +606,9 @@ export function QuotaPage() {
     [
       getCredentialActionKey,
       loadFiles,
-      loadOpenAIProviders,
       refreshDisabledCredentialsSnapshot,
       setCredentialDisabledState,
+      setOpenAIProviders,
       showNotification,
       t,
     ]
@@ -1016,7 +1039,7 @@ export function QuotaPage() {
       {vercelFiles.length > 0 ? (
         <QuotaSection
           config={VERCEL_CONFIG}
-          files={vercelFiles}
+          files={sortedVercelFiles}
           loading={openAIProvidersLoading}
           disabled={disableControls}
           renderCardAction={renderQuotaCredentialAction}

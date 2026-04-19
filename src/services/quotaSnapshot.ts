@@ -36,15 +36,6 @@ export interface QuotaSnapshot {
   channels: QuotaSnapshotChannels;
 }
 
-const EMPTY_CHANNELS: QuotaSnapshotChannels = {
-  antigravity: {},
-  claude: {},
-  codex: {},
-  vercel: {},
-  'gemini-cli': {},
-  kimi: {},
-};
-
 const asRecord = (value: unknown): Record<string, unknown> | null => {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     return null;
@@ -138,16 +129,32 @@ export async function writeQuotaSnapshot(input: {
   queryTimes: QuotaSnapshotQueryTimes;
   channels: Partial<QuotaSnapshotChannels>;
 }): Promise<void> {
+  // 读取现有快照，合并数据防止丢失
+  let existingChannels: Partial<QuotaSnapshotChannels> = {};
+  try {
+    const existing = await readQuotaSnapshot();
+    if (existing) {
+      existingChannels = existing.channels;
+    }
+  } catch (err) {
+    // 忽略读取错误，继续写入
+  }
+
+  const mergedChannels: QuotaSnapshotChannels = {
+    antigravity: { ...existingChannels.antigravity, ...input.channels.antigravity },
+    claude: { ...existingChannels.claude, ...input.channels.claude },
+    codex: { ...existingChannels.codex, ...input.channels.codex },
+    vercel: { ...existingChannels.vercel, ...input.channels.vercel },
+    'gemini-cli': { ...existingChannels['gemini-cli'], ...input.channels['gemini-cli'] },
+    kimi: { ...existingChannels.kimi, ...input.channels.kimi },
+  };
+
   const payload: QuotaSnapshot = {
     version: 1,
     updatedAt: new Date().toISOString(),
     queryTimes: input.queryTimes,
-    channels: {
-      ...EMPTY_CHANNELS,
-      ...input.channels,
-    },
+    channels: mergedChannels,
   };
 
   await writeQuotaSnapshotRaw(JSON.stringify(payload, null, 2));
 }
-

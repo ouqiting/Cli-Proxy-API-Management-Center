@@ -220,6 +220,19 @@ export const providersApi = {
   updateOpenAIProvider: (index: number, value: OpenAIProviderConfig) =>
     apiClient.patch('/openai-compatibility', { index, value: serializeOpenAIProvider(value) }),
 
+  setOpenAIApiKeyEntryStatus: (
+    providerName: string,
+    providerBaseUrl: string,
+    apiKey: string,
+    disabled: boolean
+  ) =>
+    apiClient.patch('/openai-compatibility/status', {
+      provider_name: providerName,
+      provider_base_url: providerBaseUrl,
+      api_key: apiKey,
+      disabled,
+    }),
+
   deleteOpenAIProvider: (name: string) =>
     apiClient.delete(`/openai-compatibility?name=${encodeURIComponent(name)}`),
 

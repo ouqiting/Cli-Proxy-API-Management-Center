@@ -20,7 +20,6 @@ export function ManualBackupCard() {
   const setBackupScope = useWebdavStore((s) => s.setBackupScope);
   const isBackingUp = useWebdavStore((s) => s.isBackingUp);
   const isHydrating = useWebdavStore((s) => s.isHydrating);
-  const serverUrl = useWebdavStore((s) => s.connection.serverUrl);
 
   const autoBackupEnabled = useWebdavStore((s) => s.autoBackupEnabled);
   const autoBackupInterval = useWebdavStore((s) => s.autoBackupInterval);
@@ -81,7 +80,7 @@ export function ManualBackupCard() {
             label={t('backup.auto_enable')}
             checked={autoBackupEnabled}
             onChange={setAutoBackupEnabled}
-            disabled={isHydrating || !serverUrl}
+            disabled={isHydrating}
           />
         </div>
 
@@ -156,7 +155,7 @@ export function ManualBackupCard() {
             variant="primary"
             onClick={backup}
             loading={isBackingUp}
-            disabled={isHydrating || !serverUrl}
+            disabled={isHydrating}
           >
             {t('backup.backup_now')}
           </Button>
