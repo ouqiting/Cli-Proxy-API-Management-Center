@@ -9,10 +9,13 @@ import {
   IconTrendingUp,
 } from '@/components/ui/icons';
 import {
+  LATENCY_SOURCE_FIELD,
+  calculateLatencyStatsFromDetails,
+  calculateCost,
   formatCompactNumber,
+  formatDurationMs,
   formatPerMinuteValue,
   formatUsd,
-  calculateCost,
   collectUsageDetails,
   extractTotalTokens,
   type ModelPrice,
@@ -62,10 +65,14 @@ export function StatCards({
   persistedTotalCost,
 }: StatCardsProps) {
   const { t } = useTranslation();
+  const latencyHint = t('usage_stats.latency_unit_hint', {
+    field: LATENCY_SOURCE_FIELD,
+    unit: t('usage_stats.duration_unit_ms'),
+  });
 
   const hasPrices = Object.keys(modelPrices).length > 0;
 
-  const { tokenBreakdown, rateStats, totalCost } = useMemo(() => {
+  const { tokenBreakdown, rateStats, totalCost, latencyStats } = useMemo(() => {
     const empty = {
       tokenBreakdown: { cachedTokens: 0, reasoningTokens: 0 },
       rateStats: {
@@ -76,11 +83,18 @@ export function StatCards({
         tokenCount: 0,
       },
       totalCost: persistedTotalCost ?? 0,
+      latencyStats: {
+        averageMs: null as number | null,
+        totalMs: null as number | null,
+        sampleCount: 0,
+      },
     };
 
     if (!usage) return empty;
     const details = collectUsageDetails(usage);
     if (!details.length) return empty;
+
+    const latencyStats = calculateLatencyStatsFromDetails(details);
 
     let cachedTokens = 0;
     let reasoningTokens = 0;
@@ -130,6 +144,7 @@ export function StatCards({
         tokenCount,
       },
       totalCost,
+      latencyStats,
     };
   }, [hasPrices, modelPrices, nowMs, usage]);
 
@@ -152,6 +167,12 @@ export function StatCards({
             <span className={styles.statMetaDot} style={{ backgroundColor: '#ef4444' }} />
             {t('usage_stats.failed_requests')}: {loading ? '-' : (usage?.failure_count ?? 0)}
           </span>
+          {latencyStats.sampleCount > 0 && (
+            <span className={styles.statMetaItem} title={latencyHint}>
+              {t('usage_stats.avg_time')}:{' '}
+              {loading ? '-' : formatDurationMs(latencyStats.averageMs)}
+            </span>
+          )}
         </>
       ),
       trend: sparklines.requests,

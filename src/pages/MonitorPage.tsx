@@ -26,7 +26,7 @@ import {
   collectLoggingDisabledApiKeys,
   collectLoggingDisabledSourceIds,
 } from '@/utils/apiKeySettings';
-import { buildSourceInfoMap } from '@/utils/sourceResolver';
+import { buildSourceInfoMap, type SourceInfoMap } from '@/utils/sourceResolver';
 import { filterUsageByExcludedSources, normalizeAuthIndex } from '@/utils/usage';
 import type { CredentialInfo } from '@/types/sourceInfo';
 import { KpiCards } from '@/components/monitor/KpiCards';
@@ -61,6 +61,7 @@ export interface UsageDetail {
   failed: boolean;
   source: string;
   auth_index: string;
+  latency_ms?: number | string | null;
   tokens: {
     input_tokens: number;
     output_tokens: number;
@@ -77,7 +78,6 @@ export interface UsageDetail {
   error_code?: string;
   error_message?: string;
   upstream_error_message?: string;
-  latency_ms?: number;
 }
 
 export interface UsageData {
@@ -119,9 +119,10 @@ export function MonitorPage() {
   const [providerMap, setProviderMap] = useState<Record<string, string>>({});
   const [providerModels, setProviderModels] = useState<Record<string, Set<string>>>({});
   const [providerTypeMap, setProviderTypeMap] = useState<Record<string, string>>({});
-  const [sourceInfoMap, setSourceInfoMap] = useState<
-    Map<string, import('@/types/sourceInfo').SourceInfo>
-  >(new Map());
+  const [sourceInfoMap, setSourceInfoMap] = useState<SourceInfoMap>({
+    byAuthIndex: new Map(),
+    bySource: new Map(),
+  });
   const [authFileMap, setAuthFileMap] = useState<Map<string, CredentialInfo>>(new Map());
 
   const loadProviderMap = useCallback(async () => {

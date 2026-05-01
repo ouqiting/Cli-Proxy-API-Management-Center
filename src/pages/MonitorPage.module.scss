@@ -536,13 +536,8 @@
 
 // 表格样式
 .tableWrapper {
-  overflow-x: auto;
-  max-height: 400px;
+  overflow: hidden;
   -webkit-overflow-scrolling: touch;
-
-  @include mobile {
-    max-height: 350px;
-  }
 }
 
 // 虚拟滚动容器
@@ -616,8 +611,8 @@
   th:nth-child(8), td:nth-child(8) { width: 100px; }
   // 成功率
   th:nth-child(9), td:nth-child(9) { width: 70px; }
-  // 请求数
-  th:nth-child(10), td:nth-child(10) { width: 70px; }
+  // 请求数/耗时
+  th:nth-child(10), td:nth-child(10) { width: 80px; }
   // 输入
   th:nth-child(11), td:nth-child(11) { width: 60px; }
   // 输出
