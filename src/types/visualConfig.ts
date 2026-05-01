@@ -88,7 +88,10 @@ export type VisualConfigValues = {
   upstreamTimeout: string;
   quotaSwitchProject: boolean;
   quotaSwitchPreviewModel: boolean;
+  quotaAntigravityCredits: boolean;
   routingStrategy: RoutingStrategy;
+  routingSessionAffinity: boolean;
+  routingSessionAffinityTTL: string;
   wsAuth: boolean;
   payloadDefaultRules: PayloadRule[];
   payloadDefaultRawRules: PayloadRule[];
@@ -128,7 +131,10 @@ export const DEFAULT_VISUAL_VALUES: VisualConfigValues = {
   upstreamTimeout: '',
   quotaSwitchProject: true,
   quotaSwitchPreviewModel: true,
+  quotaAntigravityCredits: false,
   routingStrategy: 'round-robin',
+  routingSessionAffinity: false,
+  routingSessionAffinityTTL: '',
   wsAuth: false,
   payloadDefaultRules: [],
   payloadDefaultRawRules: [],

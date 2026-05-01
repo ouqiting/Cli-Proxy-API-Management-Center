@@ -72,7 +72,9 @@ export function AuthFilesPrefixProxyEditorModal(props: AuthFilesPrefixProxyEdito
               editor?.saving === true ||
               editor?.loading === true ||
               !dirty ||
-              Boolean(editor?.fileNameError)
+              !editor?.json ||
+              Boolean(editor?.fileNameError) ||
+              Boolean(editor?.headersTouched && editor.headersError)
             }
           >
             {t('common.save')}
@@ -154,6 +156,20 @@ export function AuthFilesPrefixProxyEditorModal(props: AuthFilesPrefixProxyEdito
                     onChange={(e) => onChange('excludedModelsText', e.target.value)}
                   />
                   <div className="hint">{t('auth_files.excluded_models_hint')}</div>
+                </div>
+                <div className="form-group">
+                  <label>{t('auth_files.headers_label')}</label>
+                  <textarea
+                    className={`input ${editor.headersError ? styles.prefixProxyTextareaInvalid : ''}`}
+                    value={editor.headersText}
+                    placeholder={t('auth_files.headers_placeholder')}
+                    rows={4}
+                    aria-invalid={Boolean(editor.headersError)}
+                    disabled={disableControls || editor.saving || !editor.json}
+                    onChange={(e) => onChange('headersText', e.target.value)}
+                  />
+                  {editor.headersError && <div className="error-box">{editor.headersError}</div>}
+                  <div className="hint">{t('auth_files.headers_hint')}</div>
                 </div>
                 <Input
                   label={t('auth_files.disable_cooling_label')}

@@ -153,6 +153,8 @@ export function KpiCards({ data, loading, timeRange }: KpiCardsProps) {
         <div className={styles.kpiMeta}>
           <span>{t('monitor.kpi.input')}: {loading ? '--' : formatNumber(stats.inputTokens)}</span>
           <span>{t('monitor.kpi.output')}: {loading ? '--' : formatNumber(stats.outputTokens)}</span>
+          <span>{t('monitor.kpi.reasoning')}: {loading ? '--' : formatNumber(stats.reasoningTokens)}</span>
+          <span>{t('monitor.kpi.cached')}: {loading ? '--' : formatNumber(stats.cachedTokens)}</span>
         </div>
       </div>
 

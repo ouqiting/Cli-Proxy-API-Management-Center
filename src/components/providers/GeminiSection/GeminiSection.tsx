@@ -6,21 +6,23 @@ import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import iconGemini from '@/assets/icons/gemini.svg';
 import type { GeminiKeyConfig } from '@/types';
 import { maskApiKey } from '@/utils/format';
-import {
-  buildCandidateUsageSourceIds,
-  calculateStatusBarData,
-  type KeyStats,
-  type UsageDetail,
-} from '@/utils/usage';
+import { calculateStatusBarData, type KeyStats } from '@/utils/usage';
+import { type UsageDetailsByAuthIndex, type UsageDetailsBySource } from '@/utils/usageIndex';
 import styles from '@/pages/AiProvidersPage.module.scss';
 import { ProviderList } from '../ProviderList';
 import { ProviderStatusBar } from '../ProviderStatusBar';
-import { getStatsBySource, hasDisableAllModelsRule } from '../utils';
+import {
+  collectUsageDetailsForIdentity,
+  getProviderConfigKey,
+  getStatsForIdentity,
+  hasDisableAllModelsRule,
+} from '../utils';
 
 interface GeminiSectionProps {
   configs: GeminiKeyConfig[];
   keyStats: KeyStats;
-  usageDetails: UsageDetail[];
+  usageDetailsBySource: UsageDetailsBySource;
+  usageDetailsByAuthIndex: UsageDetailsByAuthIndex;
   loading: boolean;
   disableControls: boolean;
   isSwitching: boolean;
@@ -33,7 +35,8 @@ interface GeminiSectionProps {
 export function GeminiSection({
   configs,
   keyStats,
-  usageDetails,
+  usageDetailsBySource,
+  usageDetailsByAuthIndex,
   loading,
   disableControls,
   isSwitching,
@@ -49,20 +52,23 @@ export function GeminiSection({
   const statusBarCache = useMemo(() => {
     const cache = new Map<string, ReturnType<typeof calculateStatusBarData>>();
 
-    configs.forEach((config) => {
+    configs.forEach((config, index) => {
       if (!config.apiKey) return;
-      const candidates = buildCandidateUsageSourceIds({
-        apiKey: config.apiKey,
-        prefix: config.prefix,
-      });
-      if (!candidates.length) return;
-      const candidateSet = new Set(candidates);
-      const filteredDetails = usageDetails.filter((detail) => candidateSet.has(detail.source));
-      cache.set(config.apiKey, calculateStatusBarData(filteredDetails));
+      const configKey = getProviderConfigKey(config, index);
+      cache.set(
+        configKey,
+        calculateStatusBarData(
+          collectUsageDetailsForIdentity(
+            { authIndex: config.authIndex, apiKey: config.apiKey, prefix: config.prefix },
+            usageDetailsBySource,
+            usageDetailsByAuthIndex
+          )
+        )
+      );
     });
 
     return cache;
-  }, [configs, usageDetails]);
+  }, [configs, usageDetailsByAuthIndex, usageDetailsBySource]);
 
   return (
     <>
@@ -82,11 +88,11 @@ export function GeminiSection({
         <ProviderList<GeminiKeyConfig>
           items={configs}
           loading={loading}
-          keyField={(item) => item.apiKey}
+          keyField={(item, index) => getProviderConfigKey(item, index)}
           emptyTitle={t('ai_providers.gemini_empty_title')}
           emptyDescription={t('ai_providers.gemini_empty_desc')}
-          onEdit={onEdit}
-          onDelete={onDelete}
+          onEdit={(_, index) => onEdit(index)}
+          onDelete={(_, index) => onDelete(index)}
           actionsDisabled={actionsDisabled}
           getRowDisabled={(item) => hasDisableAllModelsRule(item.excludedModels)}
           renderExtraActions={(item, index) => (
@@ -98,11 +104,15 @@ export function GeminiSection({
             />
           )}
           renderContent={(item, index) => {
-            const stats = getStatsBySource(item.apiKey, keyStats, item.prefix);
+            const stats = getStatsForIdentity(
+              { authIndex: item.authIndex, apiKey: item.apiKey, prefix: item.prefix },
+              keyStats
+            );
             const headerEntries = Object.entries(item.headers || {});
             const configDisabled = hasDisableAllModelsRule(item.excludedModels);
             const excludedModels = item.excludedModels ?? [];
-            const statusData = statusBarCache.get(item.apiKey) || calculateStatusBarData([]);
+            const statusData =
+              statusBarCache.get(getProviderConfigKey(item, index)) || calculateStatusBarData([]);
 
             return (
               <Fragment>

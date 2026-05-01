@@ -9,6 +9,7 @@ import type {
 import { buildCandidateUsageSourceIds, normalizeAuthIndex, normalizeUsageSourceId } from '@/utils/usage';
 import { maskApiKey } from '@/utils/format';
 import type { SourceInfo } from '@/types/sourceInfo';
+import type { SourceInfoMap } from '@/utils/sourceResolver';
 
 export interface DisableCredentialLocator {
   source: string;
@@ -24,7 +25,7 @@ export interface DisableState {
 
 export interface UseDisableModelOptions {
   providerMap?: Record<string, string>;
-  sourceInfoMap?: Map<string, SourceInfo>;
+  sourceInfoMap?: Map<string, SourceInfo> | SourceInfoMap;
   providerModels?: Record<string, Set<string>>;
 }
 

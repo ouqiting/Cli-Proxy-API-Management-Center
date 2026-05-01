@@ -282,7 +282,7 @@ export function Modal({
       <div
         ref={modalRef}
         className={modalClass}
-        style={{ width }}
+        style={{ width, maxWidth: '100%' }}
         role="dialog"
         aria-modal="true"
         aria-labelledby={title ? titleId : undefined}
