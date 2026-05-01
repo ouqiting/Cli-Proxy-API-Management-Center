@@ -36,21 +36,13 @@ import { triggerHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import {
   LANGUAGE_LABEL_KEYS,
   LANGUAGE_ORDER,
-  STORAGE_KEY_LANGUAGE,
   STORAGE_KEY_SIDEBAR,
-  STORAGE_KEY_THEME,
 } from '@/utils/constants';
 import { isSupportedLanguage } from '@/utils/language';
 import { managementApi } from '@/services/api';
 import { useAutoBackup } from '@/features/webdavBackup/hooks/useAutoBackup';
 import { useBackupActions } from '@/features/webdavBackup/hooks/useBackupActions';
 import { useWebdavStore } from '@/features/webdavBackup/store/useWebdavStore';
-import {
-  flushFrontendStatePersist,
-  hydrateFrontendStateFromLocalFile,
-  persistRuntimeUsageSnapshot,
-  restoreRuntimeUsageSnapshotIfNeeded,
-} from '@/services/localPersistence';
 import type { Theme } from '@/types';
 
 const sidebarIcons: Record<string, ReactNode> = {
@@ -252,7 +244,6 @@ export function MainLayout() {
   const location = useLocation();
 
   const apiBase = useAuthStore((state) => state.apiBase);
-  const managementKey = useAuthStore((state) => state.managementKey);
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const updateConnectionStatus = useAuthStore((state) => state.updateConnectionStatus);
   const logout = useAuthStore((state) => state.logout);
@@ -289,8 +280,6 @@ export function MainLayout() {
   const brandCollapseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const headerRef = useRef<HTMLElement | null>(null);
   const restartPollTokenRef = useRef(0);
-  const hydratedFrontendScopeRef = useRef('');
-  const restoredRuntimeScopeRef = useRef('');
 
   const fullBrandName = 'CLI Proxy API Management Center Ouqiting';
   const abbrBrandName = t('title.abbr');
@@ -488,112 +477,6 @@ export function MainLayout() {
     });
   }, [apiBase, connectionStatus, hydrateWebdavSettings]);
 
-  useEffect(() => {
-    if (connectionStatus !== 'connected' || !apiBase || !managementKey) {
-      return;
-    }
-
-    const scopeKey = `${apiBase}::${managementKey}`;
-    if (hydratedFrontendScopeRef.current === scopeKey) {
-      return;
-    }
-
-    hydratedFrontendScopeRef.current = scopeKey;
-    let cancelled = false;
-
-    const readPersistedField = (storageKey: string, field: string): string | null => {
-      try {
-        const raw = window.localStorage.getItem(storageKey);
-        if (!raw) return null;
-        const parsed = JSON.parse(raw) as unknown;
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          const record = parsed as Record<string, unknown>;
-          const candidate =
-            record.state &&
-            typeof record.state === 'object' &&
-            !Array.isArray(record.state) &&
-            field in (record.state as Record<string, unknown>)
-              ? (record.state as Record<string, unknown>)[field]
-              : record[field];
-          return typeof candidate === 'string' ? candidate : null;
-        }
-      } catch {
-        const raw = window.localStorage.getItem(storageKey);
-        return typeof raw === 'string' && raw.trim() ? raw : null;
-      }
-      return null;
-    };
-
-    void hydrateFrontendStateFromLocalFile()
-      .then(() => {
-        if (cancelled) return;
-
-        const restoredSidebar = window.localStorage.getItem(STORAGE_KEY_SIDEBAR);
-        if (restoredSidebar === 'true' || restoredSidebar === 'false') {
-          setSidebarCollapsed(restoredSidebar === 'true');
-        }
-
-        const restoredTheme = readPersistedField(STORAGE_KEY_THEME, 'theme');
-        if (
-          restoredTheme === 'auto' ||
-          restoredTheme === 'white' ||
-          restoredTheme === 'light' ||
-          restoredTheme === 'dark'
-        ) {
-          setTheme(restoredTheme);
-        }
-
-        const restoredLanguage = readPersistedField(STORAGE_KEY_LANGUAGE, 'language');
-        if (restoredLanguage && isSupportedLanguage(restoredLanguage)) {
-          setLanguage(restoredLanguage);
-        }
-
-        void flushFrontendStatePersist().catch(() => {});
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-    };
-  }, [apiBase, connectionStatus, managementKey, setLanguage, setTheme]);
-
-  useEffect(() => {
-    if (connectionStatus !== 'connected' || !apiBase || !managementKey) {
-      return;
-    }
-
-    const scopeKey = `${apiBase}::${managementKey}`;
-    if (restoredRuntimeScopeRef.current !== scopeKey) {
-      restoredRuntimeScopeRef.current = scopeKey;
-      void restoreRuntimeUsageSnapshotIfNeeded().catch(() => {});
-    }
-
-    const persistRuntime = () => {
-      void persistRuntimeUsageSnapshot().catch((error) => {
-        console.warn('[Local Persistence] Failed to persist runtime usage:', error);
-      });
-    };
-
-    persistRuntime();
-
-    const intervalId = window.setInterval(persistRuntime, 2 * 60 * 1000);
-    const handlePageHide = () => persistRuntime();
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
-        persistRuntime();
-      }
-    };
-
-    window.addEventListener('pagehide', handlePageHide);
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      window.clearInterval(intervalId);
-      window.removeEventListener('pagehide', handlePageHide);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, [apiBase, connectionStatus, managementKey]);
-
   const statusClass =
     connectionStatus === 'connected'
       ? 'success'
@@ -739,6 +622,41 @@ export function MainLayout() {
     [clearCache, fetchConfig, showNotification, t, updateConnectionStatus]
   );
 
+  const handleDirectRestartService = useCallback(async () => {
+    setIsRestartingService(true);
+    updateConnectionStatus('connecting');
+
+    try {
+      const response = await managementApi.restartSystem();
+      if (!response?.accepted) {
+        throw new Error(response?.message || t('header.restart_failed'));
+      }
+
+      showNotification(t('header.restart_started'), 'warning');
+      clearCache();
+
+      const pollToken = Date.now();
+      restartPollTokenRef.current = pollToken;
+      pollUntilServiceRecovered(pollToken);
+    } catch (error) {
+      setIsRestartingService(false);
+      updateConnectionStatus('error');
+      const message =
+        error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+      showNotification(
+        `${t('header.restart_failed')}${message ? `: ${message}` : ''}`,
+        'error'
+      );
+      throw error;
+    }
+  }, [
+    clearCache,
+    pollUntilServiceRecovered,
+    showNotification,
+    t,
+    updateConnectionStatus,
+  ]);
+
   const handleRestartService = useCallback(() => {
     showConfirmation({
       title: t('header.restart_confirm_title'),
@@ -746,6 +664,11 @@ export function MainLayout() {
       confirmText: t('header.restart_confirm_button'),
       cancelText: t('common.cancel'),
       variant: 'danger',
+      secondaryAction: {
+        text: t('header.restart_direct_button'),
+        onClick: handleDirectRestartService,
+        variant: 'ghost',
+      },
       onConfirm: async () => {
         await backupOrThrow();
 
@@ -780,6 +703,7 @@ export function MainLayout() {
   }, [
     backupOrThrow,
     clearCache,
+    handleDirectRestartService,
     pollUntilServiceRecovered,
     showConfirmation,
     showNotification,

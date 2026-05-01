@@ -4,7 +4,7 @@ import { useBackupActions } from './useBackupActions';
 import { AUTO_BACKUP_INTERVALS } from '../constants';
 
 export function useAutoBackup() {
-  const { backup } = useBackupActions();
+  const { autoBackup } = useBackupActions();
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const autoBackupEnabled = useWebdavStore((s) => s.autoBackupEnabled);
@@ -22,19 +22,31 @@ export function useAutoBackup() {
     const intervalConfig = AUTO_BACKUP_INTERVALS.find((i) => i.value === autoBackupInterval);
     if (!intervalConfig) return;
     const intervalMs = intervalConfig.ms;
+    const WEBDAV_INTERVAL_MS = 24 * 60 * 60 * 1000; // Fixed at "Every day" (每天)
 
-    // 读取快照而非订阅，避免 backup 成功后 lastBackupTime 变化触发重新执行
-    const lastBackupTime = useWebdavStore.getState().lastBackupTime;
-    const lastTime = lastBackupTime ? new Date(lastBackupTime).getTime() : 0;
-    const elapsed = Date.now() - lastTime;
+    const checkBackup = () => {
+      const state = useWebdavStore.getState();
+      if (state.isBackingUp || state.isRestoring) return;
 
-    if (elapsed >= intervalMs) {
-      backup();
-    }
+      const now = Date.now();
+      const lastTime = state.lastBackupTime ? new Date(state.lastBackupTime).getTime() : 0;
+      const lastWebdavTime = state.lastWebdavBackupTime ? new Date(state.lastWebdavBackupTime).getTime() : 0;
+      
+      const webdavElapsed = now - lastWebdavTime;
+      const localElapsed = now - lastTime;
+      
+      if (webdavElapsed >= WEBDAV_INTERVAL_MS) {
+        autoBackup({ localOnly: false });
+      } else if (localElapsed >= intervalMs) {
+        autoBackup({ localOnly: true });
+      }
+    };
 
-    timerRef.current = setInterval(() => {
-      backup();
-    }, intervalMs);
+    // Run check immediately
+    checkBackup();
+
+    // Re-check every minute
+    timerRef.current = setInterval(checkBackup, 60 * 1000);
 
     return () => {
       if (timerRef.current) {
@@ -42,5 +54,6 @@ export function useAutoBackup() {
         timerRef.current = null;
       }
     };
-  }, [autoBackupEnabled, autoBackupInterval, hasHydrated, backup]);
+  }, [autoBackupEnabled, autoBackupInterval, hasHydrated, autoBackup]);
 }
+

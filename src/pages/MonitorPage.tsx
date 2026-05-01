@@ -19,11 +19,15 @@ import { Button } from '@/components/ui/Button';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { Select } from '@/components/ui/Select';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
-import { useThemeStore } from '@/stores';
+import { useThemeStore, useConfigStore } from '@/stores';
 import { usageApi, apiKeysApi, loadCredentialDisableSnapshot } from '@/services/api';
 import { filterDataByApiFilter, filterDataByTimeRange } from '@/utils/monitor';
+import {
+  collectLoggingDisabledApiKeys,
+  collectLoggingDisabledSourceIds,
+} from '@/utils/apiKeySettings';
 import { buildSourceInfoMap } from '@/utils/sourceResolver';
-import { normalizeAuthIndex } from '@/utils/usage';
+import { filterUsageByExcludedSources, normalizeAuthIndex } from '@/utils/usage';
 import type { CredentialInfo } from '@/types/sourceInfo';
 import { KpiCards } from '@/components/monitor/KpiCards';
 import { ModelDistributionChart } from '@/components/monitor/ModelDistributionChart';
@@ -93,7 +97,16 @@ export interface UsageData {
 export function MonitorPage() {
   const { t } = useTranslation();
   const resolvedTheme = useThemeStore((state) => state.resolvedTheme);
+  const rawConfig = useConfigStore((state) => state.config?.raw);
   const isDark = resolvedTheme === 'dark';
+  const loggingDisabledSourceIds = useMemo(
+    () => collectLoggingDisabledSourceIds(rawConfig),
+    [rawConfig]
+  );
+  const loggingDisabledApiKeys = useMemo(
+    () => collectLoggingDisabledApiKeys(rawConfig),
+    [rawConfig]
+  );
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -258,7 +271,13 @@ export function MonitorPage() {
 
       const response = usageResponse.value;
       const data = response?.usage ?? response;
-      setUsageData(data as UsageData);
+      setUsageData(
+        filterUsageByExcludedSources(
+          data as UsageData,
+          loggingDisabledSourceIds,
+          loggingDisabledApiKeys
+        )
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : t('common.unknown_error');
       console.error('Monitor: Error loading data:', err);
@@ -266,7 +285,7 @@ export function MonitorPage() {
     } finally {
       setLoading(false);
     }
-  }, [loadProviderMap, t]);
+  }, [loadProviderMap, loggingDisabledApiKeys, loggingDisabledSourceIds, t]);
 
   useEffect(() => {
     void loadData();
@@ -274,9 +293,18 @@ export function MonitorPage() {
 
   useHeaderRefresh(loadData);
 
+  const displayUsageData = useMemo(() => {
+    if (!usageData) return null;
+    return filterUsageByExcludedSources(
+      usageData,
+      loggingDisabledSourceIds,
+      loggingDisabledApiKeys
+    );
+  }, [loggingDisabledApiKeys, loggingDisabledSourceIds, usageData]);
+
   const apiFilteredData = useMemo(() => {
-    return filterDataByApiFilter(usageData, apiFilter);
-  }, [usageData, apiFilter]);
+    return filterDataByApiFilter(displayUsageData, apiFilter);
+  }, [displayUsageData, apiFilter]);
 
   const filteredData = useMemo(() => {
     return filterDataByTimeRange(apiFilteredData, timeRange);

@@ -3,7 +3,6 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '@/stores';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { restoreLatestLocalBackupIfNeeded } from '@/features/webdavBackup/hooks/useBackupActions';
-import { restoreRuntimeUsageSnapshotIfNeeded } from '@/services/localPersistence';
 
 let restoredBackupScopeKey = '';
 let restoringBackupScopeKey = '';
@@ -51,10 +50,8 @@ export function ProtectedRoute({ children }: { children: ReactElement }) {
 
         if (!restoreLatestBackupPromise || restoringBackupScopeKey !== latestScopeKey) {
           restoringBackupScopeKey = latestScopeKey;
-          restoreLatestBackupPromise = restoreRuntimeUsageSnapshotIfNeeded()
-            .then((restored) =>
-              restored ? undefined : restoreLatestLocalBackupIfNeeded().then(() => undefined)
-            )
+          restoreLatestBackupPromise = restoreLatestLocalBackupIfNeeded()
+            .then(() => undefined)
             .catch((error) => {
               console.warn('[Backup] Auto-restore latest local backup failed:', error);
             })

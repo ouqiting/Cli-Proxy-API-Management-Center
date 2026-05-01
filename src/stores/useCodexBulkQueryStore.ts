@@ -20,7 +20,6 @@ import {
 interface CodexBulkQueryStoreState extends CodexBulkQueryState {
   startQuery: () => Promise<void>;
   stopQuery: () => void;
-  removeFailedItems: (fileNames: string[]) => void;
 }
 
 const BATCH_SIZE = 10;
@@ -62,18 +61,6 @@ const buildCodexErrorState = (message: string, errorStatus?: number): CodexQuota
   error: message,
   errorStatus,
 });
-
-const isRetryableCodexQuotaError = (error: unknown): boolean => {
-  const status = getStatusFromError(error);
-  if (status !== undefined) {
-    return false;
-  }
-
-  const message =
-    error instanceof Error ? error.message.trim().toLowerCase() : String(error ?? '').trim().toLowerCase();
-
-  return message === 'request failed' || message.endsWith('request failed');
-};
 
 const restoreCodexQuotaState = (fileName: string, previousState?: CodexQuotaState) => {
   useQuotaStore.getState().setCodexQuota((prev) => {
@@ -231,7 +218,7 @@ const runCodexQuotaBatch = async (
         });
         completedCount += 1;
 
-        if (options?.collectRetryable && isRetryableCodexQuotaError(error)) {
+        if (options?.collectRetryable) {
           retryableTargets.push(file);
         }
       }
@@ -302,6 +289,12 @@ export const useCodexBulkQueryStore = create<CodexBulkQueryStoreState>((set, get
       }
 
       if (retryTargets.length > 0) {
+        useNotificationStore
+          .getState()
+          .showNotification(
+            t('quota_management.codex_query_retrying', { count: retryTargets.length }),
+            'info'
+          );
         for (let index = 0; index < retryTargets.length; index += RETRY_BATCH_SIZE) {
           if (activeRunId !== runId) return;
           if (activeAbortController?.signal.aborted) {
@@ -314,7 +307,7 @@ export const useCodexBulkQueryStore = create<CodexBulkQueryStoreState>((set, get
           result.failedResults.forEach((item) =>
             failedByFileName.set(item.fileName, {
               ...item,
-              message: `${item.message}（已重试 1 次）`,
+              message: `${item.message}(已重试一次)`,
             })
           );
           batch.forEach((file) => {
@@ -370,29 +363,5 @@ export const useCodexBulkQueryStore = create<CodexBulkQueryStoreState>((set, get
 
     set({ status: 'stopping' });
     activeAbortController.abort();
-  },
-
-  removeFailedItems: (fileNames) => {
-    const normalizedNames = Array.from(
-      new Set(fileNames.map((name) => String(name ?? '').trim()).filter(Boolean))
-    );
-    if (normalizedNames.length === 0) {
-      return;
-    }
-
-    const targetNames = new Set(normalizedNames);
-    set((state) => {
-      const removedCount = state.failedItems.filter((item) => targetNames.has(item.fileName)).length;
-      if (removedCount === 0) {
-        return {};
-      }
-
-      return {
-        failedItems: state.failedItems.filter((item) => !targetNames.has(item.fileName)),
-        errorCount: Math.max(0, state.errorCount - removedCount),
-        total: Math.max(0, state.total - removedCount),
-        completed: Math.max(0, state.completed - removedCount),
-      };
-    });
   },
 }));

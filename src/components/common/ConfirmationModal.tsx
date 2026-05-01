@@ -15,7 +15,7 @@ export function ConfirmationModal() {
     return null;
   }
 
-  const { title, message, onConfirm, onCancel, confirmText, cancelText, variant = 'primary' } = options;
+  const { title, message, onConfirm, onCancel, confirmText, cancelText, variant = 'primary', secondaryAction } = options;
 
   const handleConfirm = async () => {
     try {
@@ -26,6 +26,19 @@ export function ConfirmationModal() {
       console.error('Confirmation action failed:', error);
       // Optional: show error notification here if needed, 
       // but usually the calling component handles specific errors.
+    } finally {
+      setConfirmationLoading(false);
+    }
+  };
+
+  const handleSecondaryAction = async () => {
+    if (!secondaryAction) return;
+    try {
+      setConfirmationLoading(true);
+      await secondaryAction.onClick();
+      hideConfirmation();
+    } catch (error) {
+      console.error('Secondary action failed:', error);
     } finally {
       setConfirmationLoading(false);
     }
@@ -52,6 +65,16 @@ export function ConfirmationModal() {
         <Button variant="ghost" onClick={handleCancel} disabled={isLoading}>
           {cancelText || t('common.cancel')}
         </Button>
+        {secondaryAction && (
+          <Button
+            variant={secondaryAction.variant || 'ghost'}
+            onClick={handleSecondaryAction}
+            disabled={isLoading}
+            style={{ opacity: 0.7 }}
+          >
+            {secondaryAction.text}
+          </Button>
+        )}
         <Button 
           variant={variant} 
           onClick={handleConfirm} 

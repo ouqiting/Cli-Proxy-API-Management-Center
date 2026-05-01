@@ -37,6 +37,7 @@ interface WebdavStoreState extends PersistedWebdavSettings {
   setAutoBackupInterval: (interval: AutoBackupInterval, options?: PersistOptions) => void;
   setMaxBackupCount: (count: number, options?: PersistOptions) => void;
   setLastBackupTime: (time: string | null, options?: PersistOptions) => void;
+  setLastWebdavBackupTime: (time: string | null, options?: PersistOptions) => void;
   setConnectionStatus: (status: ConnectionStatus) => void;
   setIsBackingUp: (val: boolean) => void;
   setIsRestoring: (val: boolean) => void;
@@ -51,6 +52,7 @@ function extractPersistedState(state: WebdavStoreState): PersistedWebdavSettings
     autoBackupInterval: state.autoBackupInterval,
     maxBackupCount: state.maxBackupCount,
     lastBackupTime: state.lastBackupTime,
+    lastWebdavBackupTime: state.lastWebdavBackupTime,
   };
 }
 
@@ -168,6 +170,11 @@ export const useWebdavStore = create<WebdavStoreState>((set, get) => {
 
     setLastBackupTime: (time, options) => {
       set({ lastBackupTime: time });
+      queuePersist(options);
+    },
+
+    setLastWebdavBackupTime: (time, options) => {
+      set({ lastWebdavBackupTime: time });
       queuePersist(options);
     },
 

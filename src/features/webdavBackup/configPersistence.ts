@@ -24,6 +24,7 @@ export interface PersistedWebdavSettings {
   autoBackupInterval: AutoBackupInterval;
   maxBackupCount: number;
   lastBackupTime: string | null;
+  lastWebdavBackupTime: string | null;
 }
 
 export const DEFAULT_PERSISTED_WEBDAV_SETTINGS: PersistedWebdavSettings = {
@@ -42,6 +43,7 @@ export const DEFAULT_PERSISTED_WEBDAV_SETTINGS: PersistedWebdavSettings = {
   autoBackupInterval: '24h',
   maxBackupCount: DEFAULT_MAX_BACKUP_COUNT,
   lastBackupTime: null,
+  lastWebdavBackupTime: null,
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -139,6 +141,14 @@ export function normalizePersistedWebdavSettings(
     ? lastBackupTimeRaw
     : null;
 
+  const lastWebdavBackupTimeRaw =
+    record?.['last-webdav-backup-time'] ??
+    record?.lastWebdavBackupTime ??
+    (raw as Partial<PersistedWebdavSettings>)?.lastWebdavBackupTime;
+  const lastWebdavBackupTime = typeof lastWebdavBackupTimeRaw === 'string' && lastWebdavBackupTimeRaw.trim()
+    ? lastWebdavBackupTimeRaw
+    : null;
+
   return {
     connection,
     backupScope,
@@ -146,6 +156,7 @@ export function normalizePersistedWebdavSettings(
     autoBackupInterval,
     maxBackupCount,
     lastBackupTime,
+    lastWebdavBackupTime,
   };
 }
 
@@ -210,6 +221,12 @@ export async function saveWebdavSettingsToConfig(
     doc.setIn([...WEBDAV_BACKUP_PATH, 'last-backup-time'], settings.lastBackupTime);
   } else if (doc.hasIn([...WEBDAV_BACKUP_PATH, 'last-backup-time'])) {
     doc.deleteIn([...WEBDAV_BACKUP_PATH, 'last-backup-time']);
+  }
+
+  if (settings.lastWebdavBackupTime) {
+    doc.setIn([...WEBDAV_BACKUP_PATH, 'last-webdav-backup-time'], settings.lastWebdavBackupTime);
+  } else if (doc.hasIn([...WEBDAV_BACKUP_PATH, 'last-webdav-backup-time'])) {
+    doc.deleteIn([...WEBDAV_BACKUP_PATH, 'last-webdav-backup-time']);
   }
 
   await configFileApi.saveConfigYaml(

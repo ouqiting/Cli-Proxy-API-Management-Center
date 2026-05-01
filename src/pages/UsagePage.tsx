@@ -37,9 +37,14 @@ import {
   getModelNamesFromUsage,
   getApiStats,
   getModelStats,
+  filterUsageByExcludedSources,
   filterUsageByTimeRange,
   type UsageTimeRange,
 } from '@/utils/usage';
+import {
+  collectLoggingDisabledApiKeys,
+  collectLoggingDisabledSourceIds,
+} from '@/utils/apiKeySettings';
 import styles from './UsagePage.module.scss';
 
 // Register Chart.js components
@@ -121,6 +126,7 @@ export function UsagePage() {
   const resolvedTheme = useThemeStore((state) => state.resolvedTheme);
   const isDark = resolvedTheme === 'dark';
   const config = useConfigStore((state) => state.config);
+  const rawConfig = config?.raw;
 
   // Data hook
   const {
@@ -157,9 +163,18 @@ export function UsagePage() {
     [t]
   );
 
+  const displayUsage = useMemo(() => {
+    if (!usage) return null;
+    return filterUsageByExcludedSources(
+      usage,
+      collectLoggingDisabledSourceIds(rawConfig),
+      collectLoggingDisabledApiKeys(rawConfig)
+    );
+  }, [rawConfig, usage]);
+
   const filteredUsage = useMemo(
-    () => (usage ? filterUsageByTimeRange(usage, timeRange) : null),
-    [usage, timeRange]
+    () => (displayUsage ? filterUsageByTimeRange(displayUsage, timeRange) : null),
+    [displayUsage, timeRange]
   );
   const hourWindowHours = timeRange === 'all' ? undefined : HOUR_WINDOW_BY_TIME_RANGE[timeRange];
 
@@ -208,7 +223,7 @@ export function UsagePage() {
   } = useChartData({ usage: filteredUsage, chartLines, isDark, isMobile, hourWindowHours });
 
   // Derived data
-  const modelNames = useMemo(() => getModelNamesFromUsage(usage), [usage]);
+  const modelNames = useMemo(() => getModelNamesFromUsage(displayUsage), [displayUsage]);
   const apiStats = useMemo(
     () => getApiStats(filteredUsage, modelPrices),
     [filteredUsage, modelPrices]
@@ -314,7 +329,7 @@ export function UsagePage() {
       />
 
       {/* Service Health */}
-      <ServiceHealthCard usage={usage} loading={loading} />
+      <ServiceHealthCard usage={displayUsage} loading={loading} />
 
       {/* Charts Grid */}
       <div className={styles.chartsGrid}>

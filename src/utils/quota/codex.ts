@@ -9,6 +9,7 @@ import type {
 } from '@/types';
 import { apiCallApi, authFilesApi, getApiCallErrorMessage } from '@/services/api';
 import { normalizeAuthIndex } from '@/utils/usage';
+import { useDisabledCredentialsStore } from '@/stores';
 import { CODEX_REQUEST_HEADERS, CODEX_USAGE_URL } from './constants';
 import { createStatusError, formatCodexResetLabel } from './formatters';
 import { normalizeNumberValue, normalizePlanType, parseCodexUsagePayload } from './parsers';
@@ -252,17 +253,66 @@ export const fetchCodexQuotaData = async (
     'Chatgpt-Account-Id': accountId,
   };
 
-  const result = await apiCallApi.request(
-    {
-      authIndex,
-      method: 'GET',
-      url: CODEX_USAGE_URL,
-      header: requestHeader,
-    },
-    requestConfig
-  );
+  let result;
+  try {
+    result = await apiCallApi.request(
+      {
+        authIndex,
+        method: 'GET',
+        url: CODEX_USAGE_URL,
+        header: requestHeader,
+      },
+      requestConfig
+    );
+  } catch (error: unknown) {
+    // 检测429错误且包含"The usage limit has been reached"时自动禁用凭证
+    if (error instanceof Error) {
+      const errorStatus = (error as Error & { statusCode?: number }).statusCode;
+      if (errorStatus === 429 && error.message.includes('The usage limit has been reached')) {
+        try {
+          const { setTargetDisabledState } = useDisabledCredentialsStore.getState();
+          await setTargetDisabledState(
+            {
+              kind: 'auth_file',
+              name: file.name,
+              authIndex: authIndex,
+              displayName: file.name,
+              disabled: true,
+            },
+            true
+          );
+          console.log(`[Codex Quota] Auto-disabled credential ${file.name} due to 429 usage limit reached`);
+        } catch (disableError) {
+          console.warn('[Codex Quota] Failed to auto-disable credential:', disableError);
+        }
+      }
+    }
+    throw error;
+  }
 
   if (result.statusCode < 200 || result.statusCode >= 300) {
+    // 检测429状态码且错误信息包含"The usage limit has been reached"时自动禁用凭证
+    if (result.statusCode === 429) {
+      const errorMessage = getApiCallErrorMessage(result);
+      if (errorMessage.includes('The usage limit has been reached')) {
+        try {
+          const { setTargetDisabledState } = useDisabledCredentialsStore.getState();
+          await setTargetDisabledState(
+            {
+              kind: 'auth_file',
+              name: file.name,
+              authIndex: authIndex,
+              displayName: file.name,
+              disabled: true,
+            },
+            true
+          );
+          console.log(`[Codex Quota] Auto-disabled credential ${file.name} due to 429 usage limit reached`);
+        } catch (disableError) {
+          console.warn('[Codex Quota] Failed to auto-disable credential:', disableError);
+        }
+      }
+    }
     throw createStatusError(getApiCallErrorMessage(result), result.statusCode);
   }
 

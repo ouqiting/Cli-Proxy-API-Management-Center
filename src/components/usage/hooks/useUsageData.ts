@@ -1,10 +1,17 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { USAGE_STATS_STALE_TIME_MS, useNotificationStore, useUsageStatsStore } from '@/stores';
+import {
+  USAGE_STATS_STALE_TIME_MS,
+  useConfigStore,
+  useNotificationStore,
+  useUsageStatsStore,
+} from '@/stores';
 import { usageApi } from '@/services/api/usage';
 import { webuiDataApi } from '@/services/api/webuiData';
 import { downloadBlob } from '@/utils/download';
+import { collectLoggingDisabledApiKeys, collectLoggingDisabledSourceIds } from '@/utils/apiKeySettings';
 import {
+  filterUsageByExcludedSources,
   loadModelPrices,
   calculateRecentPerMinuteRates,
   calculateTotalCost,
@@ -124,6 +131,7 @@ export function useUsageData(): UseUsageDataReturn {
   const storeError = useUsageStatsStore((state) => state.error);
   const lastRefreshedAtTs = useUsageStatsStore((state) => state.lastRefreshedAt);
   const loadUsageStats = useUsageStatsStore((state) => state.loadUsageStats);
+  const rawConfig = useConfigStore((state) => state.config?.raw);
 
   const [modelPrices, setModelPrices] = useState<Record<string, ModelPrice>>({});
   const [persistedRpm, setPersistedRpm] = useState<number | null>(null);
@@ -225,6 +233,10 @@ export function useUsageData(): UseUsageDataReturn {
     };
   }, [applyPersistedUsageStats, loadUsageStats]);
 
+  useEffect(() => {
+    void loadUsageStats({ force: true, staleTimeMs: USAGE_STATS_STALE_TIME_MS }).catch(() => {});
+  }, [loadUsageStats, rawConfig]);
+
   const usage = usageSnapshot as UsagePayload | null;
 
   useEffect(() => {
@@ -262,6 +274,15 @@ export function useUsageData(): UseUsageDataReturn {
     setExporting(true);
     try {
       const data = await usageApi.exportUsage();
+      const excludedSources = collectLoggingDisabledSourceIds(rawConfig);
+      const excludedApiKeys = collectLoggingDisabledApiKeys(rawConfig);
+      const filteredData =
+        data && typeof data === 'object' && data !== null
+          ? ({
+              ...data,
+              usage: filterUsageByExcludedSources(data.usage, excludedSources, excludedApiKeys),
+            } as UsagePayload)
+          : data;
       const exportedAt =
         typeof data?.exported_at === 'string' ? new Date(data.exported_at) : new Date();
       const safeTimestamp = Number.isNaN(exportedAt.getTime())
@@ -270,7 +291,7 @@ export function useUsageData(): UseUsageDataReturn {
       const filename = `usage-export-${safeTimestamp.replace(/[:.]/g, '-')}.json`;
       downloadBlob({
         filename,
-        blob: new Blob([JSON.stringify(data ?? {}, null, 2)], { type: 'application/json' }),
+        blob: new Blob([JSON.stringify(filteredData ?? {}, null, 2)], { type: 'application/json' }),
       });
       showNotification(t('usage_stats.export_success'), 'success');
     } catch (err: unknown) {

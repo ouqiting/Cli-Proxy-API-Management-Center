@@ -2,9 +2,12 @@ import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNotificationStore, useAuthStore } from '@/stores';
 import { configApi, usageApi, webuiDataApi } from '@/services/api';
-import { LOCAL_STATE_EXCLUDED_KEYS } from '@/services/localPersistence';
 import { readQuotaSnapshotRaw, writeQuotaSnapshotRaw } from '@/services/quotaSnapshot';
-import { collectUsageDetails } from '@/utils/usage';
+import { collectUsageDetails, filterUsageByExcludedSources } from '@/utils/usage';
+import {
+  collectLoggingDisabledApiKeys,
+  collectLoggingDisabledSourceIds,
+} from '@/utils/apiKeySettings';
 import { webdavClient } from '../client/webdavClient';
 import { useWebdavStore } from '../store/useWebdavStore';
 import type { BackupPayload, BackupData, BackupScope, WebdavFileInfo } from '../types';
@@ -23,6 +26,14 @@ import {
   decryptFromBackup,
 } from '../utils';
 
+const BACKUP_LOCALSTORAGE_EXCLUDED_KEYS = new Set([
+  'cli-proxy-auth',
+  'isLoggedIn',
+  'apiBase',
+  'apiUrl',
+  'managementKey',
+]);
+
 function getAppVersion(): string {
   try {
     return typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '0.0.0';
@@ -38,7 +49,7 @@ async function collectBackupData(scope: BackupScope): Promise<BackupData> {
     const lsData: Record<string, string> = {};
     for (let index = 0; index < localStorage.length; index += 1) {
       const key = localStorage.key(index);
-      if (!key || LOCAL_STATE_EXCLUDED_KEYS.has(key)) continue;
+      if (!key || BACKUP_LOCALSTORAGE_EXCLUDED_KEYS.has(key)) continue;
       const val = localStorage.getItem(key);
       if (val !== null) lsData[key] = val;
     }
@@ -55,9 +66,28 @@ async function collectBackupData(scope: BackupScope): Promise<BackupData> {
   }
 
   if (scope.usage) {
+    let rawConfigForUsageFilter: Record<string, unknown> | null = null;
+    if (!scope.config) {
+      try {
+        const cfg = await configApi.getRawConfig();
+        rawConfigForUsageFilter = cfg as Record<string, unknown>;
+      } catch (err) {
+        console.warn('[WebDAV Backup] Failed to fetch config for usage filter:', err);
+      }
+    }
+
     try {
       const usage = await usageApi.exportUsage();
-      data.usage = usage as Record<string, unknown>;
+      const rawConfig = rawConfigForUsageFilter ?? data.config;
+      const excludedSources = collectLoggingDisabledSourceIds(rawConfig);
+      const excludedApiKeys = collectLoggingDisabledApiKeys(rawConfig);
+      const usageRecord =
+        usage && typeof usage === 'object' && usage !== null ? (usage as Record<string, unknown>) : {};
+      const rawUsage = usageRecord.usage;
+      data.usage = {
+        ...usageRecord,
+        usage: filterUsageByExcludedSources(rawUsage, excludedSources, excludedApiKeys),
+      };
     } catch (err) {
       console.warn('[WebDAV Backup] Failed to export usage:', err);
     }
@@ -181,8 +211,8 @@ export function useBackupActions() {
   }, [showNotification, t]);
 
   const performBackup = useCallback(
-    async ({ throwOnError = false }: { throwOnError?: boolean } = {}) => {
-      const { connection, backupScope, maxBackupCount, setIsBackingUp, setLastBackupTime } =
+    async ({ throwOnError = false, localOnly = false }: { throwOnError?: boolean; localOnly?: boolean } = {}) => {
+      const { connection, backupScope, maxBackupCount, setIsBackingUp, setLastBackupTime, setLastWebdavBackupTime } =
         useWebdavStore.getState();
 
       setIsBackingUp(true);
@@ -194,11 +224,16 @@ export function useBackupActions() {
 
         await saveLocalBackup(filename, payloadJson, maxBackupCount);
 
+        const now = new Date().toISOString();
+        setLastBackupTime(now);
+
         let remoteError: Error | null = null;
-        if (connection.serverUrl) {
+        if (connection.serverUrl && !localOnly) {
           try {
             await webdavClient.ensureDirectory(connection);
             await webdavClient.putFile(connection, filename, payloadJson);
+            
+            setLastWebdavBackupTime(now);
 
             if (maxBackupCount > 0) {
               try {
@@ -237,9 +272,6 @@ export function useBackupActions() {
           }
         }
 
-        const now = new Date().toISOString();
-        setLastBackupTime(now);
-
         if (remoteError) {
           showNotification(
             t('backup.backup_partial_success', { message: remoteError.message }),
@@ -266,10 +298,14 @@ export function useBackupActions() {
     [t, showNotification]
   );
 
-  const backup = useCallback(() => performBackup(), [performBackup]);
+  const backup = useCallback(() => performBackup({ localOnly: false }), [performBackup]);
 
   const backupOrThrow = useCallback(async () => {
-    await performBackup({ throwOnError: true });
+    await performBackup({ throwOnError: true, localOnly: false });
+  }, [performBackup]);
+
+  const autoBackup = useCallback(async ({ localOnly = false }: { localOnly?: boolean } = {}) => {
+    await performBackup({ localOnly });
   }, [performBackup]);
 
   const exportLocal = useCallback(async () => {
@@ -465,9 +501,57 @@ export function useBackupActions() {
     [t, showNotification]
   );
 
+  const deleteAllBackupFiles = useCallback(async () => {
+    const { connection } = useWebdavStore.getState();
+    let failedCount = 0;
+
+    try {
+      const localFiles = await listLocalBackups();
+      for (const file of localFiles) {
+        try {
+          await deleteLocalBackup(file.filename);
+        } catch (err) {
+          failedCount++;
+          console.warn('[All Backup Delete] Failed to delete local:', file.filename, err);
+        }
+      }
+    } catch (err) {
+      console.warn('[All Backup Delete] Failed to list local backups:', err);
+    }
+
+    if (connection.serverUrl) {
+      try {
+        const files = await webdavClient.listDirectory(connection);
+        const backupFiles = files.filter(
+          (f) => !f.isCollection && isBackupFile(f.displayName)
+        );
+        for (const file of backupFiles) {
+          try {
+            await webdavClient.deleteFile(connection, file.displayName);
+          } catch (err) {
+            failedCount++;
+            console.warn('[All Backup Delete] Failed to delete cloud:', file.displayName, err);
+          }
+        }
+      } catch (err) {
+        console.warn('[All Backup Delete] Failed to list cloud backups:', err);
+      }
+    }
+
+    if (failedCount > 0) {
+      showNotification(
+        `${t('backup.delete_all_success')}（${failedCount} ${t('backup.delete_all_failed_count')}）`,
+        'warning'
+      );
+    } else {
+      showNotification(t('backup.delete_all_success'), 'success');
+    }
+  }, [t, showNotification]);
+
   return {
     backup,
     backupOrThrow,
+    autoBackup,
     exportLocal,
     loadLocalHistory,
     loadHistory,
@@ -475,6 +559,7 @@ export function useBackupActions() {
     downloadLocalFile,
     deleteLocal,
     deleteRemote,
+    deleteAllBackupFiles,
     restore,
     restoreLocalBackup,
     restoreFromLocal,

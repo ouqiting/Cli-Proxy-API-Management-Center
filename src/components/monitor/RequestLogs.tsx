@@ -6,7 +6,13 @@ import { Modal } from '@/components/ui/Modal';
 import { usageApi, authFilesApi } from '@/services/api';
 import { logsApi, type RequestLogDetailResponse } from '@/services/api/logs';
 import { useDisableModel } from '@/hooks';
+import { useConfigStore } from '@/stores';
+import {
+  collectLoggingDisabledApiKeys,
+  collectLoggingDisabledSourceIds,
+} from '@/utils/apiKeySettings';
 import { normalizeUsageSourceId, normalizeAuthIndex } from '@/utils/usage';
+import { filterUsageByExcludedSources } from '@/utils/usage';
 import { resolveSourceDisplay } from '@/utils/sourceResolver';
 import type { ApiError } from '@/types';
 import type { SourceInfo, CredentialInfo } from '@/types/sourceInfo';
@@ -100,6 +106,15 @@ const getDisplayStatusCode = (statusCode?: number, upstreamStatusCode?: number):
 
 export function RequestLogs({ data, loading: parentLoading, providerMap, providerTypeMap, sourceInfoMap, authFileMap: propAuthFileMap, apiFilter }: RequestLogsProps) {
   const { t } = useTranslation();
+  const rawConfig = useConfigStore((state) => state.config?.raw);
+  const loggingDisabledSourceIds = useMemo(
+    () => collectLoggingDisabledSourceIds(rawConfig),
+    [rawConfig]
+  );
+  const loggingDisabledApiKeys = useMemo(
+    () => collectLoggingDisabledApiKeys(rawConfig),
+    [rawConfig]
+  );
   const [filterApi, setFilterApi] = useState('');
   const [filterModel, setFilterModel] = useState('');
   const [filterSource, setFilterSource] = useState('');
@@ -204,13 +219,24 @@ export function RequestLogs({ data, loading: parentLoading, providerMap, provide
     try {
       const response = await usageApi.getUsage();
       const usageData = (response?.usage ?? response) as UsageData;
-      setLogData(filterDataByTimeRange(usageData, timeRange, customRange, apiFilter));
+      setLogData(
+        filterDataByTimeRange(
+          filterUsageByExcludedSources(
+            usageData,
+            loggingDisabledSourceIds,
+            loggingDisabledApiKeys
+          ),
+          timeRange,
+          customRange,
+          apiFilter
+        )
+      );
     } catch (err) {
       console.error('日志刷新失败：', err);
     } finally {
       setLogLoading(false);
     }
-  }, [timeRange, customRange, apiFilter]);
+  }, [timeRange, customRange, apiFilter, loggingDisabledApiKeys, loggingDisabledSourceIds]);
 
   // 同步 fetchLogData 到 ref，确保定时器始终调用最新版本
   useEffect(() => {
@@ -300,6 +326,13 @@ export function RequestLogs({ data, loading: parentLoading, providerMap, provide
             normalizedSource = normalizeUsageSourceId(source);
             normalizeCache.set(source, normalizedSource);
           }
+          if (
+            detail.failed !== true &&
+            (loggingDisabledApiKeys.has(apiKey) ||
+              Boolean(normalizedSource && loggingDisabledSourceIds.has(normalizedSource)))
+          ) {
+            return;
+          }
           const sourceInfo = resolveSourceDisplay(normalizedSource, detail.auth_index, sourceInfoMap, authFileMap);
           const providerType = sourceInfo.type || providerTypeMap[source] || '--';
           const resolvedName = sourceInfo.displayName && sourceInfo.displayName !== normalizedSource
@@ -339,7 +372,15 @@ export function RequestLogs({ data, loading: parentLoading, providerMap, provide
 
     // 按时间倒序排序
     return entries.sort((a, b) => b.timestampMs - a.timestampMs);
-  }, [effectiveData, providerMap, providerTypeMap, sourceInfoMap, authFileMap]);
+  }, [
+    effectiveData,
+    providerMap,
+    providerTypeMap,
+    sourceInfoMap,
+    authFileMap,
+    loggingDisabledApiKeys,
+    loggingDisabledSourceIds,
+  ]);
 
   // 预计算所有条目的统计数据（一次性计算，避免渲染时重复计算）
   const precomputedStats = useMemo(() => {

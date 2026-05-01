@@ -15,6 +15,7 @@ import {
 } from '@/stores';
 import { configApi, managementApi } from '@/services/api';
 import { apiKeysApi } from '@/services/api/apiKeys';
+import { collectConfiguredDisabledModelNames } from '@/utils/apiKeySettings';
 import { classifyModels, mergeModelLists } from '@/utils/models';
 import { STORAGE_KEY_AUTH } from '@/utils/constants';
 import { INLINE_LOGO_JPEG } from '@/assets/logoInline';
@@ -129,32 +130,7 @@ export function SystemPage() {
   const versionTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const configuredDisabledModelNames = useMemo(() => {
-    const raw = config?.raw?.['api-key-models'];
-    if (!Array.isArray(raw)) return [];
-
-    const seen = new Set<string>();
-    const names: string[] = [];
-
-    raw.forEach((entry) => {
-      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
-      const record = entry as Record<string, unknown>;
-      const disabledModels = Array.isArray(record['disabled-models'])
-        ? record['disabled-models']
-        : Array.isArray(record.disabledModels)
-          ? record.disabledModels
-          : [];
-
-      disabledModels.forEach((item) => {
-        const trimmed = String(item ?? '').trim();
-        if (!trimmed) return;
-        const key = trimmed.toLowerCase();
-        if (seen.has(key)) return;
-        seen.add(key);
-        names.push(trimmed);
-      });
-    });
-
-    return names;
+    return collectConfiguredDisabledModelNames(config?.raw);
   }, [config?.raw]);
 
   const otherLabel = useMemo(

@@ -1,57 +1,32 @@
 import { useCallback, useMemo, useState } from 'react';
 import { isMap, parse as parseYaml, parseDocument } from 'yaml';
 import type {
+  ApiKeyRoutingStrategy,
   PayloadFilterRule,
   PayloadParamEntry,
   PayloadParamValueType,
   PayloadRule,
+  RoutingStrategy,
   VisualConfigApiKeyEntry,
   VisualConfigValues,
   VisualConfigValidationErrors,
   PayloadParamValidationErrorCode,
 } from '@/types/visualConfig';
 import { DEFAULT_VISUAL_VALUES } from '@/types/visualConfig';
+import {
+  extractApiKeyValue,
+  normalizeApiKeyNote,
+  normalizeOptionalRoutingStrategy,
+  normalizeApiKeySettingsEntries,
+  normalizeLegacyApiKeyModelEntries,
+  normalizeModelNameList,
+  normalizeRoutingStrategy,
+  shouldPersistApiKeySettingsEntry,
+} from '@/utils/apiKeySettings';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
-}
-
-function extractApiKeyValue(raw: unknown): string | null {
-  if (typeof raw === 'string') {
-    const trimmed = raw.trim();
-    return trimmed ? trimmed : null;
-  }
-
-  const record = asRecord(raw);
-  if (!record) return null;
-
-  const candidates = [record['api-key'], record.apiKey, record.key, record.Key];
-  for (const candidate of candidates) {
-    if (typeof candidate === 'string') {
-      const trimmed = candidate.trim();
-      if (trimmed) return trimmed;
-    }
-  }
-
-  return null;
-}
-
-function normalizeModelNameList(raw: unknown): string[] {
-  const rawList = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(/[\n,]+/) : [];
-  const seen = new Set<string>();
-  const models: string[] = [];
-
-  for (const item of rawList) {
-    const trimmed = String(item ?? '').trim();
-    if (!trimmed) continue;
-    const dedupeKey = trimmed.toLowerCase();
-    if (seen.has(dedupeKey)) continue;
-    seen.add(dedupeKey);
-    models.push(trimmed);
-  }
-
-  return models;
 }
 
 function parseApiKeyEntries(raw: unknown): VisualConfigApiKeyEntry[] {
@@ -69,25 +44,10 @@ function parseApiKeyEntries(raw: unknown): VisualConfigApiKeyEntry[] {
       id: `api-key-${entries.length}`,
       apiKey,
       disabledModels,
+      strategy: normalizeOptionalRoutingStrategy(record?.strategy),
+      disableLogging: record?.['disable-logging'] === true || record?.disableLogging === true,
+      note: normalizeApiKeyNote(record?.note),
     });
-  }
-
-  return entries;
-}
-
-function parseApiKeyModelEntries(raw: unknown): Array<{ apiKey: string; disabledModels: string[] }> {
-  if (!Array.isArray(raw)) return [];
-
-  const entries: Array<{ apiKey: string; disabledModels: string[] }> = [];
-  for (const item of raw) {
-    const apiKey = extractApiKeyValue(item);
-    if (!apiKey) continue;
-    const record = asRecord(item);
-    const disabledModels = normalizeModelNameList(
-      record?.['disabled-models'] ?? record?.disabledModels
-    );
-    if (disabledModels.length === 0) continue;
-    entries.push({ apiKey, disabledModels });
   }
 
   return entries;
@@ -102,7 +62,29 @@ function resolveApiKeyEntries(parsed: Record<string, unknown>): VisualConfigApiK
     });
   }
 
-  parseApiKeyModelEntries(parsed['api-key-models']).forEach((entry) => {
+  normalizeApiKeySettingsEntries(parsed['api-key-settings']).forEach((entry) => {
+    const existing = entriesMap.get(entry.apiKey);
+    if (existing) {
+      entriesMap.set(entry.apiKey, {
+        ...existing,
+        disabledModels: entry.disabledModels,
+        strategy: entry.strategy,
+        disableLogging: entry.disableLogging,
+        note: entry.note,
+      });
+      return;
+    }
+    entriesMap.set(entry.apiKey, {
+      id: `api-key-${entriesMap.size}`,
+      apiKey: entry.apiKey,
+      disabledModels: entry.disabledModels,
+      strategy: entry.strategy,
+      disableLogging: entry.disableLogging,
+      note: entry.note,
+    });
+  });
+
+  normalizeLegacyApiKeyModelEntries(parsed['api-key-models']).forEach((entry) => {
     const existing = entriesMap.get(entry.apiKey);
     if (existing) {
       entriesMap.set(entry.apiKey, { ...existing, disabledModels: entry.disabledModels });
@@ -112,6 +94,9 @@ function resolveApiKeyEntries(parsed: Record<string, unknown>): VisualConfigApiK
       id: `api-key-${entriesMap.size}`,
       apiKey: entry.apiKey,
       disabledModels: entry.disabledModels,
+      strategy: '',
+      disableLogging: false,
+      note: '',
     });
   });
 
@@ -146,12 +131,38 @@ function serializeApiKeyModelEntriesForYaml(
       if (!apiKey) return null;
 
       const disabledModels = normalizeModelNameList(entry.disabledModels);
-      if (disabledModels.length === 0) return null;
+      const strategy: ApiKeyRoutingStrategy = normalizeOptionalRoutingStrategy(entry.strategy);
+      const note = normalizeApiKeyNote(entry.note);
+      const disableLogging = entry.disableLogging === true;
+      if (
+        !shouldPersistApiKeySettingsEntry({
+          apiKey,
+          disabledModels,
+          strategy,
+          disableLogging,
+          note,
+        })
+      ) {
+        return null;
+      }
 
-      return {
+      const serialized: Record<string, unknown> = {
         'api-key': apiKey,
-        'disabled-models': disabledModels,
       };
+      if (disabledModels.length > 0) {
+        serialized['disabled-models'] = disabledModels;
+      }
+      if (strategy) {
+        serialized.strategy = strategy;
+      }
+      if (disableLogging) {
+        serialized['disable-logging'] = true;
+      }
+      if (note) {
+        serialized.note = note;
+      }
+
+      return serialized;
     })
     .filter(Boolean) as Array<Record<string, unknown>>;
 }
@@ -609,7 +620,7 @@ export function useVisualConfig() {
         quotaSwitchProject: Boolean(quotaExceeded?.['switch-project'] ?? true),
         quotaSwitchPreviewModel: Boolean(quotaExceeded?.['switch-preview-model'] ?? true),
 
-        routingStrategy: routing?.strategy === 'fill-first' ? 'fill-first' : 'round-robin',
+        routingStrategy: normalizeRoutingStrategy(routing?.strategy),
 
         payloadDefaultRules: parsePayloadRules(payload?.default),
         payloadDefaultRawRules: parseRawPayloadRules(payload?.['default-raw']),
@@ -690,10 +701,13 @@ export function useVisualConfig() {
         } else if (docHas(doc, ['api-keys'])) {
           doc.deleteIn(['api-keys']);
         }
-        const apiKeyModels = serializeApiKeyModelEntriesForYaml(values.apiKeyEntries);
-        if (apiKeyModels.length > 0) {
-          doc.setIn(['api-key-models'], apiKeyModels);
-        } else if (docHas(doc, ['api-key-models'])) {
+        const apiKeySettings = serializeApiKeyModelEntriesForYaml(values.apiKeyEntries);
+        if (apiKeySettings.length > 0) {
+          doc.setIn(['api-key-settings'], apiKeySettings);
+        } else if (docHas(doc, ['api-key-settings'])) {
+          doc.deleteIn(['api-key-settings']);
+        }
+        if (docHas(doc, ['api-key-models'])) {
           doc.deleteIn(['api-key-models']);
         }
         deleteLegacyApiKeysProvider(doc);
@@ -873,6 +887,23 @@ export const VISUAL_CONFIG_PROTOCOL_OPTIONS = [
     defaultLabel: 'Antigravity',
   },
 ] as const;
+
+export const VISUAL_CONFIG_ROUTING_STRATEGY_OPTIONS = [
+  {
+    value: 'round-robin',
+    labelKey: 'config_management.visual.sections.network.strategy_round_robin',
+    defaultLabel: 'Round Robin',
+  },
+  {
+    value: 'fill-first',
+    labelKey: 'config_management.visual.sections.network.strategy_fill_first',
+    defaultLabel: 'Fill First',
+  },
+] as const satisfies ReadonlyArray<{
+  value: RoutingStrategy;
+  labelKey: string;
+  defaultLabel: string;
+}>;
 
 export const VISUAL_CONFIG_PAYLOAD_VALUE_TYPE_OPTIONS = [
   {

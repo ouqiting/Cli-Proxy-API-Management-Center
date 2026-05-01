@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { SelectionCheckbox } from '@/components/ui/SelectionCheckbox';
+import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { modelsApi } from '@/services/api/models';
 import { useAuthStore, useNotificationStore } from '@/stores';
 import styles from './VisualConfigEditor.module.scss';
@@ -20,10 +21,16 @@ import type {
 import { makeClientId } from '@/types/visualConfig';
 import {
   getPayloadParamValidationError,
+  VISUAL_CONFIG_ROUTING_STRATEGY_OPTIONS,
   VISUAL_CONFIG_PAYLOAD_VALUE_TYPE_OPTIONS,
   VISUAL_CONFIG_PROTOCOL_OPTIONS,
 } from '@/hooks/useVisualConfig';
 import { maskApiKey } from '@/utils/format';
+import {
+  API_KEY_NOTE_MAX_LENGTH,
+  normalizeApiKeyNote,
+  normalizeOptionalRoutingStrategy,
+} from '@/utils/apiKeySettings';
 import { isValidApiKeyCharset } from '@/utils/validation';
 
 function getValidationMessage(
@@ -84,6 +91,9 @@ function normalizeApiKeyEntries(entries: VisualConfigApiKeyEntry[]): VisualConfi
         id: entry.id || `api-key-${index}-${makeClientId()}`,
         apiKey,
         disabledModels: normalizeUniqueStrings(entry.disabledModels ?? []),
+        strategy: normalizeOptionalRoutingStrategy(entry.strategy),
+        disableLogging: entry.disableLogging === true,
+        note: normalizeApiKeyNote(entry.note),
       };
     })
     .filter(Boolean) as VisualConfigApiKeyEntry[];
@@ -238,10 +248,14 @@ function ApiKeyModelsModal({
       <div className={styles.apiKeyModelsModalBody}>
         <div className={styles.apiKeyModelsSummary}>
           <div className={styles.apiKeyModelsSummaryTitle}>
-            {maskApiKey(apiKeyEntry?.apiKey ?? '')}
+            {apiKeyEntry?.note || maskApiKey(apiKeyEntry?.apiKey ?? '')}
           </div>
           <div className={styles.apiKeyModelsSummaryText}>
-            {t('config_management.visual.api_keys.models_hint')}
+            {apiKeyEntry?.note
+              ? `${maskApiKey(apiKeyEntry?.apiKey ?? '')} · ${t(
+                  'config_management.visual.api_keys.models_hint'
+                )}`
+              : t('config_management.visual.api_keys.models_hint')}
           </div>
           <div className={styles.apiKeyModelsStatus}>{loadedHint}</div>
         </div>
@@ -316,11 +330,18 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
   const apiKeyInputId = useId();
   const apiKeyHintId = `${apiKeyInputId}-hint`;
   const apiKeyErrorId = `${apiKeyInputId}-error`;
+  const noteInputId = useId();
+  const noteHintId = `${noteInputId}-hint`;
+  const strategySelectId = useId();
+  const strategyHintId = `${strategySelectId}-hint`;
   const [modalOpen, setModalOpen] = useState(false);
   const [modelsModalOpen, setModelsModalOpen] = useState(false);
   const [editingApiKeyId, setEditingApiKeyId] = useState<string | null>(null);
   const [modelsApiKeyId, setModelsApiKeyId] = useState<string | null>(null);
   const [inputValue, setInputValue] = useState('');
+  const [noteValue, setNoteValue] = useState('');
+  const [strategyValue, setStrategyValue] = useState<VisualConfigApiKeyEntry['strategy']>('');
+  const [disableLoggingValue, setDisableLoggingValue] = useState(false);
   const [formError, setFormError] = useState('');
 
   function generateSecureApiKey(): string {
@@ -333,14 +354,21 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
   const openAddModal = () => {
     setEditingApiKeyId(null);
     setInputValue('');
+    setNoteValue('');
+    setStrategyValue('');
+    setDisableLoggingValue(false);
     setFormError('');
     setModalOpen(true);
   };
 
   const openEditModal = (apiKeyId: string) => {
     const editingIndex = apiKeys.findIndex((entry) => entry.id === apiKeyId);
+    const entry = apiKeys[editingIndex];
     setEditingApiKeyId(apiKeyId);
-    setInputValue(apiKeys[editingIndex]?.apiKey ?? '');
+    setInputValue(entry?.apiKey ?? '');
+    setNoteValue(entry?.note ?? '');
+    setStrategyValue(entry?.strategy ?? '');
+    setDisableLoggingValue(entry?.disableLogging === true);
     setFormError('');
     setModalOpen(true);
   };
@@ -353,6 +381,9 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
   const closeModal = () => {
     setModalOpen(false);
     setInputValue('');
+    setNoteValue('');
+    setStrategyValue('');
+    setDisableLoggingValue(false);
     setEditingApiKeyId(null);
     setFormError('');
   };
@@ -382,15 +413,43 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
       setFormError(t('config_management.visual.api_keys.error_invalid'));
       return;
     }
+    if (Array.from(noteValue.trim()).length > API_KEY_NOTE_MAX_LENGTH) {
+      setFormError(
+        t('config_management.visual.api_keys.error_note_too_long', {
+          max: API_KEY_NOTE_MAX_LENGTH,
+        })
+      );
+      return;
+    }
 
     const editingIndex = editingApiKeyId
       ? apiKeys.findIndex((entry) => entry.id === editingApiKeyId)
       : -1;
+    const normalizedNote = normalizeApiKeyNote(noteValue);
+    const normalizedStrategy = normalizeOptionalRoutingStrategy(strategyValue);
     const nextKeys: VisualConfigApiKeyEntry[] =
       editingApiKeyId === null
-        ? [...apiKeys, { id: makeClientId(), apiKey: trimmed, disabledModels: [] }]
+        ? [
+            ...apiKeys,
+            {
+              id: makeClientId(),
+              apiKey: trimmed,
+              disabledModels: [],
+              strategy: normalizedStrategy,
+              disableLogging: disableLoggingValue,
+              note: normalizedNote,
+            },
+          ]
         : apiKeys.map((entry, idx) =>
-            idx === editingIndex ? { ...entry, apiKey: trimmed } : entry
+            idx === editingIndex
+              ? {
+                  ...entry,
+                  apiKey: trimmed,
+                  strategy: normalizedStrategy,
+                  disableLogging: disableLoggingValue,
+                  note: normalizedNote,
+                }
+              : entry
           );
     updateApiKeys(nextKeys);
     closeModal();
@@ -419,6 +478,20 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
   };
 
   const modelsTargetEntry = apiKeys.find((entry) => entry.id === modelsApiKeyId) ?? null;
+  const routingStrategyOptions = useMemo(
+    () => [
+      {
+        value: '',
+        label: t('config_management.visual.api_keys.strategy_placeholder'),
+      },
+      ...VISUAL_CONFIG_ROUTING_STRATEGY_OPTIONS.map((option) => ({
+        value: option.value,
+        label: t(option.labelKey, { defaultValue: option.defaultLabel }),
+      })),
+    ],
+    [t]
+  );
+  const noteCharacterCount = Array.from(noteValue).length;
 
   return (
     <div className="form-group" style={{ marginBottom: 0 }}>
@@ -438,10 +511,26 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
               <div className="item-meta">
                 <div className="pill">#{index + 1}</div>
                 <div className="item-title">
-                  {t('config_management.visual.api_keys.input_label')}
+                  {entry.note || t('config_management.visual.api_keys.input_label')}
                 </div>
                 <div className="item-subtitle">{maskApiKey(entry.apiKey)}</div>
                 <div className={styles.apiKeyCardMetaRow}>
+                  {entry.strategy ? (
+                    <span className={styles.apiKeyCardMetaLabel}>
+                      {t('config_management.visual.sections.network.routing_strategy')}
+                      {': '}
+                      {t(
+                        entry.strategy === 'fill-first'
+                          ? 'config_management.visual.sections.network.strategy_fill_first'
+                          : 'config_management.visual.sections.network.strategy_round_robin'
+                      )}
+                    </span>
+                  ) : null}
+                  {entry.disableLogging ? (
+                    <span className={styles.apiKeyCardMetaLabel}>
+                      {t('config_management.visual.api_keys.logging_disabled_badge')}
+                    </span>
+                  ) : null}
                   <span className={styles.apiKeyCardMetaLabel}>
                     {entry.disabledModels.length > 0
                       ? t('config_management.visual.api_keys.disabled_models_count', {
@@ -546,6 +635,61 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
               {formError}
             </div>
           )}
+        </div>
+        <div className="form-group">
+          <label htmlFor={noteInputId}>{t('config_management.visual.api_keys.note_label')}</label>
+          <input
+            id={noteInputId}
+            className="input"
+            placeholder={t('config_management.visual.api_keys.note_placeholder')}
+            value={noteValue}
+            onChange={(e) => {
+              setNoteValue(Array.from(e.target.value).slice(0, API_KEY_NOTE_MAX_LENGTH).join(''));
+              setFormError('');
+            }}
+            maxLength={API_KEY_NOTE_MAX_LENGTH}
+            disabled={disabled}
+            aria-describedby={noteHintId}
+          />
+          <div id={noteHintId} className="hint">
+            {t('config_management.visual.api_keys.note_hint', {
+              max: API_KEY_NOTE_MAX_LENGTH,
+              count: noteCharacterCount,
+            })}
+          </div>
+        </div>
+        <div className="form-group">
+          <label id={strategySelectId}>
+            {t('config_management.visual.sections.network.routing_strategy')}
+          </label>
+          <Select
+            value={strategyValue}
+            options={routingStrategyOptions}
+            placeholder={t('config_management.visual.api_keys.strategy_placeholder')}
+            disabled={disabled}
+            ariaLabelledBy={strategySelectId}
+            ariaDescribedBy={strategyHintId}
+            onChange={(nextValue) => setStrategyValue(normalizeOptionalRoutingStrategy(nextValue))}
+          />
+          <div id={strategyHintId} className="hint">
+            {t('config_management.visual.api_keys.strategy_hint')}
+          </div>
+        </div>
+        <div className={styles.toggleRow}>
+          <div className={styles.toggleCopy}>
+            <div className={styles.toggleTitle}>
+              {t('config_management.visual.api_keys.disable_logging_label')}
+            </div>
+            <div className={styles.toggleDescription}>
+              {t('config_management.visual.api_keys.disable_logging_hint')}
+            </div>
+          </div>
+          <ToggleSwitch
+            checked={disableLoggingValue}
+            onChange={setDisableLoggingValue}
+            disabled={disabled}
+            ariaLabel={t('config_management.visual.api_keys.disable_logging_label')}
+          />
         </div>
       </Modal>
 

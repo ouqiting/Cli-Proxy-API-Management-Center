@@ -17,6 +17,11 @@ interface ConfirmationOptions {
   variant?: 'danger' | 'primary' | 'secondary';
   onConfirm: () => void | Promise<void>;
   onCancel?: () => void;
+  secondaryAction?: {
+    text: string;
+    onClick: () => void | Promise<void>;
+    variant?: 'danger' | 'primary' | 'secondary' | 'ghost';
+  };
 }
 
 interface NotificationState {

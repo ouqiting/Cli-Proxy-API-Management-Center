@@ -58,6 +58,7 @@ export interface UsageDetail {
   error_message?: string;
   upstream_error_message?: string;
   latency_ms?: number;
+  __apiName?: string;
   __modelName?: string;
   __timestampMs?: number;
 }
@@ -228,6 +229,111 @@ export function filterUsageByTimeRange<T>(usageData: T, range: UsageTimeRange, n
   } as T;
 }
 
+export function filterUsageByExcludedSources<T>(
+  usageData: T,
+  excludedSources: ReadonlySet<string>,
+  excludedApiKeys: ReadonlySet<string> = new Set<string>()
+): T {
+  if (!excludedSources.size && !excludedApiKeys.size) {
+    return usageData;
+  }
+
+  const usageRecord = isRecord(usageData) ? usageData : null;
+  const apis = getApisRecord(usageData);
+  if (!usageRecord || !apis) {
+    return usageData;
+  }
+
+  const filteredApis: Record<string, unknown> = {};
+  const totalSummary = createUsageSummary();
+
+  Object.entries(apis).forEach(([apiName, apiEntry]) => {
+    if (!isRecord(apiEntry)) {
+      return;
+    }
+
+    const models = isRecord(apiEntry.models) ? apiEntry.models : null;
+    if (!models) {
+      return;
+    }
+
+    const filteredModels: Record<string, unknown> = {};
+    const apiSummary = createUsageSummary();
+    let hasModelData = false;
+
+    Object.entries(models).forEach(([modelName, modelEntry]) => {
+      if (!isRecord(modelEntry)) {
+        return;
+      }
+
+      const detailsRaw = Array.isArray(modelEntry.details) ? modelEntry.details : [];
+      const modelSummary = createUsageSummary();
+      const filteredDetails: unknown[] = [];
+
+      detailsRaw.forEach((detail) => {
+        const detailRecord = isRecord(detail) ? detail : null;
+        if (!detailRecord) {
+          return;
+        }
+
+        const normalizedSource = normalizeUsageSourceId(detailRecord.source);
+        const matchesLoggingDisabledKey =
+          excludedApiKeys.has(apiName) || Boolean(normalizedSource && excludedSources.has(normalizedSource));
+        const shouldHideSuccessLog = matchesLoggingDisabledKey && detailRecord.failed !== true;
+        if (shouldHideSuccessLog) {
+          return;
+        }
+
+        filteredDetails.push(detail);
+        modelSummary.totalRequests += 1;
+        if (detailRecord.failed === true) {
+          modelSummary.failureCount += 1;
+        } else {
+          modelSummary.successCount += 1;
+        }
+        modelSummary.totalTokens += extractTotalTokens(detailRecord);
+      });
+
+      if (!filteredDetails.length) {
+        return;
+      }
+
+      filteredModels[modelName] = {
+        ...modelEntry,
+        ...toUsageSummaryFields(modelSummary),
+        details: filteredDetails,
+      };
+      hasModelData = true;
+
+      apiSummary.totalRequests += modelSummary.totalRequests;
+      apiSummary.successCount += modelSummary.successCount;
+      apiSummary.failureCount += modelSummary.failureCount;
+      apiSummary.totalTokens += modelSummary.totalTokens;
+    });
+
+    if (!hasModelData) {
+      return;
+    }
+
+    filteredApis[apiName] = {
+      ...apiEntry,
+      ...toUsageSummaryFields(apiSummary),
+      models: filteredModels,
+    };
+
+    totalSummary.totalRequests += apiSummary.totalRequests;
+    totalSummary.successCount += apiSummary.successCount;
+    totalSummary.failureCount += apiSummary.failureCount;
+    totalSummary.totalTokens += apiSummary.totalTokens;
+  });
+
+  return {
+    ...usageRecord,
+    ...toUsageSummaryFields(totalSummary),
+    apis: filteredApis,
+  } as T;
+}
+
 export const normalizeAuthIndex = (value: unknown) => {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value.toString();
@@ -242,6 +348,11 @@ export const normalizeAuthIndex = (value: unknown) => {
 const USAGE_SOURCE_PREFIX_KEY = 'k:';
 const USAGE_SOURCE_PREFIX_MASKED = 'm:';
 const USAGE_SOURCE_PREFIX_TEXT = 't:';
+const NORMALIZED_USAGE_SOURCE_PREFIXES = [
+  USAGE_SOURCE_PREFIX_KEY,
+  USAGE_SOURCE_PREFIX_MASKED,
+  USAGE_SOURCE_PREFIX_TEXT,
+];
 
 const KEY_LIKE_TOKEN_REGEX =
   /(sk-[A-Za-z0-9-_]{6,}|sk-ant-[A-Za-z0-9-_]{6,}|AIza[0-9A-Za-z-_]{8,}|AI[a-zA-Z0-9_-]{6,}|hf_[A-Za-z0-9]{6,}|pk_[A-Za-z0-9]{6,}|rk_[A-Za-z0-9]{6,})/;
@@ -327,6 +438,9 @@ export function normalizeUsageSourceId(
   const raw = typeof value === 'string' ? value : value === null || value === undefined ? '' : String(value);
   const trimmed = raw.trim();
   if (!trimmed) return '';
+  if (NORMALIZED_USAGE_SOURCE_PREFIXES.some((prefix) => trimmed.startsWith(prefix))) {
+    return trimmed;
+  }
 
   const extracted = extractRawSecretFromText(trimmed);
   if (extracted) {
@@ -496,7 +610,7 @@ export function collectUsageDetails(usageData: unknown): UsageDetail[] {
     return normalized;
   };
 
-  Object.values(apis).forEach((apiEntry) => {
+  Object.entries(apis).forEach(([apiName, apiEntry]) => {
     if (!isRecord(apiEntry)) return;
     const modelsRaw = apiEntry.models;
     const models = isRecord(modelsRaw) ? modelsRaw : null;
@@ -531,6 +645,7 @@ export function collectUsageDetails(usageData: unknown): UsageDetail[] {
               ? detailRaw.upstream_error_message
               : undefined,
           latency_ms: toOptionalNumber(detailRaw.latency_ms),
+          __apiName: apiName,
           __modelName: modelName,
           __timestampMs: Number.isNaN(timestampMs) ? 0 : timestampMs,
         });
@@ -615,6 +730,7 @@ export function collectUsageDetailsWithEndpoint(usageData: unknown): UsageDetail
               ? detailRaw.upstream_error_message
               : undefined,
           latency_ms: toOptionalNumber(detailRaw.latency_ms),
+          __apiName: endpoint,
           __modelName: modelName,
           __endpoint: endpoint,
           __endpointMethod: endpointMethod,

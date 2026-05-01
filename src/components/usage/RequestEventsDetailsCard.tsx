@@ -5,17 +5,23 @@ import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
+import { useConfigStore } from '@/stores';
 import { authFilesApi } from '@/services/api/authFiles';
 import { logsApi, type RequestLogDetailResponse } from '@/services/api/logs';
 import type { ApiError } from '@/types';
 import type { GeminiKeyConfig, ProviderKeyConfig, OpenAIProviderConfig } from '@/types';
 import type { AuthFileItem } from '@/types/authFile';
 import type { CredentialInfo } from '@/types/sourceInfo';
+import {
+  collectLoggingDisabledApiKeys,
+  collectLoggingDisabledSourceIds,
+} from '@/utils/apiKeySettings';
 import { buildSourceInfoMap, resolveSourceDisplay } from '@/utils/sourceResolver';
 import {
   collectUsageDetails,
   extractTotalTokens,
-  normalizeAuthIndex
+  normalizeAuthIndex,
+  normalizeUsageSourceId,
 } from '@/utils/usage';
 import { downloadBlob } from '@/utils/download';
 import styles from '@/pages/UsagePage.module.scss';
@@ -28,6 +34,7 @@ type RequestEventRow = {
   timestamp: string;
   timestampMs: number;
   timestampLabel: string;
+  apiKey: string;
   model: string;
   sourceRaw: string;
   source: string;
@@ -111,6 +118,15 @@ export function RequestEventsDetailsCard({
   openaiProviders
 }: RequestEventsDetailsCardProps) {
   const { t, i18n } = useTranslation();
+  const rawConfig = useConfigStore((state) => state.config?.raw);
+  const loggingDisabledApiKeys = useMemo(
+    () => collectLoggingDisabledApiKeys(rawConfig),
+    [rawConfig]
+  );
+  const loggingDisabledSourceIds = useMemo(
+    () => collectLoggingDisabledSourceIds(rawConfig),
+    [rawConfig]
+  );
 
   const [modelFilter, setModelFilter] = useState(ALL_FILTER);
   const [sourceFilter, setSourceFilter] = useState(ALL_FILTER);
@@ -178,6 +194,7 @@ export function RequestEventsDetailsCard({
         const sourceInfo = resolveSourceDisplay(sourceRaw, authIndexRaw, sourceInfoMap, authFileMap);
         const source = sourceInfo.displayName;
         const sourceType = sourceInfo.type;
+        const apiKey = String(detail.__apiName ?? '').trim();
         const model = String(detail.__modelName ?? '').trim() || '-';
         const inputTokens = Math.max(toNumber(detail.tokens?.input_tokens), 0);
         const outputTokens = Math.max(toNumber(detail.tokens?.output_tokens), 0);
@@ -196,6 +213,7 @@ export function RequestEventsDetailsCard({
           timestamp,
           timestampMs: Number.isNaN(timestampMs) ? 0 : timestampMs,
           timestampLabel: date ? date.toLocaleString(i18n.language) : timestamp || '-',
+          apiKey,
           model,
           sourceRaw: sourceRaw || '-',
           source,
@@ -219,8 +237,23 @@ export function RequestEventsDetailsCard({
           totalTokens
         };
       })
+      .filter((row) => {
+        const normalizedSource = normalizeUsageSourceId(row.sourceRaw);
+        return !(
+          row.failed !== true &&
+          (loggingDisabledApiKeys.has(row.apiKey) ||
+            Boolean(normalizedSource && loggingDisabledSourceIds.has(normalizedSource)))
+        );
+      })
       .sort((a, b) => b.timestampMs - a.timestampMs);
-  }, [authFileMap, i18n.language, sourceInfoMap, usage]);
+  }, [
+    authFileMap,
+    i18n.language,
+    loggingDisabledApiKeys,
+    loggingDisabledSourceIds,
+    sourceInfoMap,
+    usage,
+  ]);
 
   const modelOptions = useMemo(
     () => [

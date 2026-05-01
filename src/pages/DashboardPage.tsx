@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/icons';
 import { useAuthStore, useConfigStore, useModelsStore } from '@/stores';
 import { apiKeysApi, providersApi, authFilesApi } from '@/services/api';
+import { collectConfiguredDisabledModelNames } from '@/utils/apiKeySettings';
 import { mergeModelLists } from '@/utils/models';
 import styles from './DashboardPage.module.scss';
 
@@ -60,32 +61,7 @@ export function DashboardPage() {
   const apiKeysCache = useRef<string[]>([]);
 
   const configuredDisabledModelNames = useMemo(() => {
-    const raw = config?.raw?.['api-key-models'];
-    if (!Array.isArray(raw)) return [];
-
-    const seen = new Set<string>();
-    const names: string[] = [];
-
-    raw.forEach((entry) => {
-      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
-      const record = entry as Record<string, unknown>;
-      const disabledModels = Array.isArray(record['disabled-models'])
-        ? record['disabled-models']
-        : Array.isArray(record.disabledModels)
-          ? record.disabledModels
-          : [];
-
-      disabledModels.forEach((item) => {
-        const trimmed = String(item ?? '').trim();
-        if (!trimmed) return;
-        const key = trimmed.toLowerCase();
-        if (seen.has(key)) return;
-        seen.add(key);
-        names.push(trimmed);
-      });
-    });
-
-    return names;
+    return collectConfiguredDisabledModelNames(config?.raw);
   }, [config?.raw]);
 
   const visibleModels = useMemo(

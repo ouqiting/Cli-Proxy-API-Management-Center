@@ -217,7 +217,6 @@ export function QuotaPage() {
   const [openAIProvidersLoading, setOpenAIProvidersLoading] = useState(true);
   const [error, setError] = useState('');
   const [codexQueryModalOpen, setCodexQueryModalOpen] = useState(false);
-  const [deletingFailedConfigs, setDeletingFailedConfigs] = useState(false);
   const [credentialActionLoadingKey, setCredentialActionLoadingKey] = useState<string | null>(null);
   const [vercelBulkLoading, setVercelBulkLoading] = useState(false);
   const [codexWeeklyLimitLoading, setCodexWeeklyLimitLoading] = useState(false);
@@ -233,7 +232,6 @@ export function QuotaPage() {
   });
 
   const disableControls = connectionStatus !== 'connected';
-  const showConfirmation = useNotificationStore((state) => state.showConfirmation);
   const showNotification = useNotificationStore((state) => state.showNotification);
   const codexHasEverRun = useCodexBulkQueryStore((state) => state.hasEverRun);
   const codexQueryStatus = useCodexBulkQueryStore((state) => state.status);
@@ -245,7 +243,6 @@ export function QuotaPage() {
   const codexQueryLastFinishedAt = useCodexBulkQueryStore((state) => state.lastFinishedAt);
   const startCodexBulkQuery = useCodexBulkQueryStore((state) => state.startQuery);
   const stopCodexBulkQuery = useCodexBulkQueryStore((state) => state.stopQuery);
-  const removeFailedCodexItems = useCodexBulkQueryStore((state) => state.removeFailedItems);
   const antigravityQuota = useQuotaStore((state) => state.antigravityQuota);
   const claudeQuota = useQuotaStore((state) => state.claudeQuota);
   const codexQuota = useQuotaStore((state) => state.codexQuota);
@@ -430,98 +427,6 @@ export function QuotaPage() {
       refreshDisabledCredentialsSnapshot(true),
     ]);
   }, [loadConfig, loadFiles, loadOpenAIProviders, refreshDisabledCredentialsSnapshot]);
-
-  const handleDeleteFailedCodexConfigs = useCallback(() => {
-    if (deletingFailedConfigs) return;
-
-    const systemLabel = t('quota_management.codex_query_system_label');
-    const failedFileNames = Array.from(
-      new Set(
-        codexQueryFailedItems
-          .map((item) => item.fileName)
-          .filter((name) => name && name !== systemLabel)
-      )
-    );
-
-    if (failedFileNames.length === 0) {
-      showNotification(t('quota_management.codex_query_delete_none'), 'info');
-      return;
-    }
-
-    showConfirmation({
-      title: t('quota_management.codex_query_delete_failed'),
-      message: t('quota_management.codex_query_delete_confirm', {
-        count: failedFileNames.length,
-      }),
-      variant: 'danger',
-      confirmText: t('common.confirm'),
-      onConfirm: async () => {
-        setDeletingFailedConfigs(true);
-        try {
-          const results = await Promise.allSettled(
-            failedFileNames.map((name) => authFilesApi.deleteFile(name))
-          );
-
-          const deletedNames: string[] = [];
-          let failedCount = 0;
-
-          results.forEach((result, index) => {
-            if (result.status === 'fulfilled') {
-              deletedNames.push(failedFileNames[index]);
-            } else {
-              failedCount += 1;
-            }
-          });
-
-          if (deletedNames.length > 0) {
-            const deletedSet = new Set(deletedNames);
-            setFiles((prev) => prev.filter((file) => !deletedSet.has(file.name)));
-            setCodexQuota((prev) => {
-              const next = { ...prev };
-              deletedNames.forEach((name) => {
-                delete next[name];
-              });
-              return next;
-            });
-            removeFailedCodexItems(deletedNames);
-          }
-
-          if (deletedNames.length > 0 && failedCount === 0) {
-            showNotification(
-              t('quota_management.codex_query_delete_success', {
-                count: deletedNames.length,
-              }),
-              'success'
-            );
-            return;
-          }
-
-          if (deletedNames.length > 0) {
-            showNotification(
-              t('quota_management.codex_query_delete_partial', {
-                success: deletedNames.length,
-                failed: failedCount,
-              }),
-              'warning'
-            );
-            return;
-          }
-
-          showNotification(t('quota_management.codex_query_delete_failed_notice'), 'error');
-        } finally {
-          setDeletingFailedConfigs(false);
-        }
-      },
-    });
-  }, [
-    codexQueryFailedItems,
-    deletingFailedConfigs,
-    removeFailedCodexItems,
-    setCodexQuota,
-    showConfirmation,
-    showNotification,
-    t,
-  ]);
 
   const getCredentialActionKey = useCallback((item: AuthFileItem) => {
     if (
@@ -1107,7 +1012,6 @@ export function QuotaPage() {
         open={codexQueryModalOpen}
         onClose={() => setCodexQueryModalOpen(false)}
         disabled={disableControls}
-        deletingFailedConfigs={deletingFailedConfigs}
         queryState={{
           hasEverRun: codexHasEverRun,
           status: codexQueryStatus,
@@ -1120,7 +1024,6 @@ export function QuotaPage() {
         }}
         onStart={startCodexBulkQuery}
         onStop={stopCodexBulkQuery}
-        onDeleteFailed={handleDeleteFailedCodexConfigs}
       />
     </div>
   );

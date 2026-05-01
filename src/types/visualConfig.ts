@@ -1,4 +1,6 @@
 export type PayloadParamValueType = 'string' | 'number' | 'boolean' | 'json';
+export type RoutingStrategy = 'round-robin' | 'fill-first';
+export type ApiKeyRoutingStrategy = '' | RoutingStrategy;
 export type PayloadParamValidationErrorCode =
   | 'payload_invalid_number'
   | 'payload_invalid_boolean'
@@ -50,6 +52,9 @@ export type VisualConfigApiKeyEntry = {
   id: string;
   apiKey: string;
   disabledModels: string[];
+  strategy: ApiKeyRoutingStrategy;
+  disableLogging: boolean;
+  note: string;
 };
 
 export interface StreamingConfig {
@@ -83,7 +88,7 @@ export type VisualConfigValues = {
   upstreamTimeout: string;
   quotaSwitchProject: boolean;
   quotaSwitchPreviewModel: boolean;
-  routingStrategy: 'round-robin' | 'fill-first';
+  routingStrategy: RoutingStrategy;
   wsAuth: boolean;
   payloadDefaultRules: PayloadRule[];
   payloadDefaultRawRules: PayloadRule[];

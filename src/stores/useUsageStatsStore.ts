@@ -1,7 +1,10 @@
 import { create } from 'zustand';
 import { usageApi } from '@/services/api';
 import { useAuthStore } from '@/stores/useAuthStore';
+import { useConfigStore } from '@/stores/useConfigStore';
 import { collectUsageDetails, computeKeyStatsFromDetails, type KeyStats, type UsageDetail } from '@/utils/usage';
+import { filterUsageByExcludedSources } from '@/utils/usage';
+import { collectLoggingDisabledApiKeys, collectLoggingDisabledSourceIds } from '@/utils/apiKeySettings';
 import i18n from '@/i18n';
 
 export const USAGE_STATS_STALE_TIME_MS = 240_000;
@@ -93,14 +96,22 @@ export const useUsageStatsStore = create<UsageStatsState>((set, get) => ({
       try {
         const usageResponse = await usageApi.getUsage();
         const rawUsage = usageResponse?.usage ?? usageResponse;
+        const rawConfig = useConfigStore.getState().config?.raw;
+        const loggingDisabledSourceIds = collectLoggingDisabledSourceIds(
+          rawConfig
+        );
+        const loggingDisabledApiKeys = collectLoggingDisabledApiKeys(rawConfig);
         const usage =
           rawUsage && typeof rawUsage === 'object' ? (rawUsage as UsageStatsSnapshot) : null;
+        const filteredUsage = usage
+          ? filterUsageByExcludedSources(usage, loggingDisabledSourceIds, loggingDisabledApiKeys)
+          : null;
 
         if (requestId !== usageRequestToken) return;
 
-        const usageDetails = collectUsageDetails(usage);
+        const usageDetails = collectUsageDetails(filteredUsage);
         set({
-          usage,
+          usage: filteredUsage,
           keyStats: computeKeyStatsFromDetails(usageDetails),
           usageDetails,
           loading: false,

@@ -42,6 +42,7 @@ import {
   PayloadFilterRulesEditor,
   PayloadRulesEditor,
 } from './VisualConfigEditorBlocks';
+import { VISUAL_CONFIG_ROUTING_STRATEGY_OPTIONS } from '@/hooks/useVisualConfig';
 import styles from './VisualConfigEditor.module.scss';
 
 type VisualSectionId =
@@ -214,6 +215,14 @@ export function VisualConfigEditor({
   const nonstreamKeepaliveError = getValidationMessage(
     t,
     validationErrors?.['streaming.nonstreamKeepaliveInterval']
+  );
+  const routingStrategyOptions = useMemo(
+    () =>
+      VISUAL_CONFIG_ROUTING_STRATEGY_OPTIONS.map((option) => ({
+        value: option.value,
+        label: t(option.labelKey, { defaultValue: option.defaultLabel }),
+      })),
+    [t]
   );
 
   const handleApiKeyEntriesChange = useCallback(
@@ -803,16 +812,7 @@ export function VisualConfigEditor({
                 >
                   <Select
                     value={values.routingStrategy}
-                    options={[
-                      {
-                        value: 'round-robin',
-                        label: t('config_management.visual.sections.network.strategy_round_robin'),
-                      },
-                      {
-                        value: 'fill-first',
-                        label: t('config_management.visual.sections.network.strategy_fill_first'),
-                      },
-                    ]}
+                    options={routingStrategyOptions}
                     id={`${routingStrategyLabelId}-select`}
                     disabled={disabled}
                     ariaLabelledBy={routingStrategyLabelId}

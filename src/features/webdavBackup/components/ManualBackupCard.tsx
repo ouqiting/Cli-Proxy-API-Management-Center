@@ -1,3 +1,4 @@
+import { useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -13,7 +14,7 @@ const SCOPE_ITEMS = ['localStorage', 'config', 'usage'] as const;
 
 export function ManualBackupCard() {
   const { t } = useTranslation();
-  const { backup, exportLocal } = useBackupActions();
+  const { backup, exportLocal, deleteAllBackupFiles } = useBackupActions();
   const { showConfirmation } = useNotificationStore();
 
   const backupScope = useWebdavStore((s) => s.backupScope);
@@ -28,6 +29,25 @@ export function ManualBackupCard() {
   const setAutoBackupEnabled = useWebdavStore((s) => s.setAutoBackupEnabled);
   const setAutoBackupInterval = useWebdavStore((s) => s.setAutoBackupInterval);
   const setMaxBackupCount = useWebdavStore((s) => s.setMaxBackupCount);
+
+  const [isDeletingAll, setIsDeletingAll] = useState(false);
+
+  const handleDeleteAll = useCallback(() => {
+    showConfirmation({
+      title: t('backup.delete_all_confirm_title'),
+      message: t('backup.delete_all_confirm_message'),
+      confirmText: t('common.delete'),
+      variant: 'danger',
+      onConfirm: async () => {
+        setIsDeletingAll(true);
+        try {
+          await deleteAllBackupFiles();
+        } finally {
+          setIsDeletingAll(false);
+        }
+      },
+    });
+  }, [showConfirmation, deleteAllBackupFiles, t]);
 
   const intervalOptions = [
     { value: '5m', label: t('backup.interval_5m') },
@@ -148,6 +168,14 @@ export function ManualBackupCard() {
 
         {/* 操作按钮 */}
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <Button
+            variant="danger"
+            onClick={handleDeleteAll}
+            disabled={isHydrating}
+            loading={isDeletingAll}
+          >
+            {t('backup.delete_all_statistics')}
+          </Button>
           <Button variant="secondary" onClick={exportLocal} disabled={isHydrating}>
             {t('backup.export_local')}
           </Button>

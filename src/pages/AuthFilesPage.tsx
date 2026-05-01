@@ -19,7 +19,6 @@ import { usePageTransitionLayer } from '@/components/common/PageTransitionLayer'
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { IconFilterAll } from '@/components/ui/icons';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -58,6 +57,8 @@ import {
   type AuthFilesSortMode,
 } from '@/features/authFiles/uiState';
 import { useAuthStore, useNotificationStore, useThemeStore } from '@/stores';
+import { webuiDataApi } from '@/services/api/webuiData';
+import { downloadBlob } from '@/utils/download';
 import styles from './AuthFilesPage.module.scss';
 
 const easePower3Out = (progress: number) => 1 - (1 - progress) ** 4;
@@ -66,9 +67,6 @@ const BATCH_BAR_BASE_TRANSFORM = 'translateX(-50%)';
 const BATCH_BAR_HIDDEN_TRANSFORM = 'translateX(-50%) translateY(56px)';
 const DEFAULT_REGULAR_PAGE_SIZE = 9;
 const DEFAULT_COMPACT_PAGE_SIZE = 12;
-const DEFAULT_KEY_COMMAND_COUNT = '20';
-const DEFAULT_KEY_COMMAND_CONCURRENCY = '10';
-type KeyCommandPlatform = 'linux' | 'windows';
 
 export function AuthFilesPage() {
   const { t } = useTranslation();
@@ -91,14 +89,7 @@ export function AuthFilesPage() {
   const [pageSizeInput, setPageSizeInput] = useState('9');
   const [viewMode, setViewMode] = useState<'diagram' | 'list'>('list');
   const [sortMode, setSortMode] = useState<AuthFilesSortMode>('default');
-  const [batchActionBarVisible, setBatchActionBarVisible] = useState(false);
-  const [keyCommandModalOpen, setKeyCommandModalOpen] = useState(false);
-  const [keyCommandPlatform, setKeyCommandPlatform] = useState<KeyCommandPlatform>('linux');
-  const [keyCommandCount, setKeyCommandCount] = useState(DEFAULT_KEY_COMMAND_COUNT);
-  const [keyCommandConcurrency, setKeyCommandConcurrency] = useState(
-    DEFAULT_KEY_COMMAND_CONCURRENCY
-  );
-  const floatingBatchActionsRef = useRef<HTMLDivElement>(null);
+  const [batchActionBarVisible, setBatchActionBarVisible] = useState(false);  const floatingBatchActionsRef = useRef<HTMLDivElement>(null);
   const batchActionAnimationRef = useRef<AnimationPlaybackControlsWithThen | null>(null);
   const previousSelectionCountRef = useRef(0);
   const selectionCountRef = useRef(0);
@@ -428,35 +419,41 @@ export function AuthFilesPage() {
     [showNotification, t]
   );
 
-  const normalizePositiveIntegerText = useCallback((value: string, fallback: string) => {
-    const trimmed = value.trim();
-    if (!trimmed) return fallback;
-    const parsed = Number.parseInt(trimmed, 10);
-    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
-    return String(parsed);
-  }, []);
 
-  const resolvedKeyCommandCount = useMemo(
-    () => normalizePositiveIntegerText(keyCommandCount, DEFAULT_KEY_COMMAND_COUNT),
-    [keyCommandCount, normalizePositiveIntegerText]
-  );
-  const resolvedKeyCommandConcurrency = useMemo(
-    () => normalizePositiveIntegerText(keyCommandConcurrency, DEFAULT_KEY_COMMAND_CONCURRENCY),
-    [keyCommandConcurrency, normalizePositiveIntegerText]
-  );
+  const handleDownloadCodexConfig = useCallback(async () => {
+    try {
+      showNotification(t('auth_files.config_downloading', { defaultValue: '正在获取配置文件...' }), 'info');
+      const [configToml, authJson] = await Promise.all([
+        webuiDataApi.readTextFile('config/config.toml').catch(() => null),
+        webuiDataApi.readTextFile('config/auth.json').catch(() => null)
+      ]);
 
-  const keyGenerateCommand = useMemo(
-    () =>
-      keyCommandPlatform === 'windows'
-        ? `python chatgpt_register_v2.py -n ${resolvedKeyCommandCount} -w ${resolvedKeyCommandConcurrency}`
-        : `cd /srv/chatgpt_register_v2_by_AI && python3 chatgpt_register_v2.py -n ${resolvedKeyCommandCount} -w ${resolvedKeyCommandConcurrency}`,
-    [keyCommandPlatform, resolvedKeyCommandConcurrency, resolvedKeyCommandCount]
-  );
-  const keyCopyCommand = useMemo(
-    () =>
-      'cp -a /srv/chatgpt_register_v2_by_AI/tokens/. /root/.cli-proxy-api/ && rm -rf /srv/chatgpt_register_v2_by_AI/tokens',
-    []
-  );
+      if (configToml === null && authJson === null) {
+        showNotification(t('auth_files.config_not_found', { defaultValue: '配置文件不存在' }), 'error');
+        return;
+      }
+
+      if (configToml !== null) {
+        downloadBlob({
+          filename: 'config.toml',
+          blob: new Blob([configToml], { type: 'text/plain' })
+        });
+      }
+
+      if (authJson !== null) {
+        setTimeout(() => {
+          downloadBlob({
+            filename: 'auth.json',
+            blob: new Blob([authJson], { type: 'application/json' })
+          });
+        }, 300);
+      }
+      
+      showNotification(t('auth_files.config_download_success', { defaultValue: '配置文件下载成功' }), 'success');
+    } catch (e) {
+      showNotification(t('auth_files.config_download_failed', { defaultValue: '下载配置文件失败' }), 'error');
+    }
+  }, [showNotification, t]);
 
   const openExcludedEditor = useCallback(
     (provider?: string) => {
@@ -694,9 +691,9 @@ export function AuthFilesPage() {
             <Button
               variant="secondary"
               size="sm"
-              onClick={() => setKeyCommandModalOpen(true)}
+              onClick={handleDownloadCodexConfig}
             >
-              {t('auth_files.key_command_button', { defaultValue: '获取密钥命令' })}
+              {t('auth_files.download_codex_config', { defaultValue: '获取codex配置文件' })}
             </Button>
             <Button variant="secondary" size="sm" onClick={handleHeaderRefresh} disabled={loading}>
               {t('common.refresh')}
@@ -933,103 +930,6 @@ export function AuthFilesPage() {
         onSave={handlePrefixProxySave}
         onChange={handlePrefixProxyChange}
       />
-
-      <Modal
-        open={keyCommandModalOpen}
-        onClose={() => setKeyCommandModalOpen(false)}
-        title={t('auth_files.key_command_modal_title', { defaultValue: '获取密钥命令' })}
-        width={760}
-        className={styles.keyCommandModal}
-        footer={
-          <div className={styles.keyCommandFooter}>
-            <Button variant="secondary" size="sm" onClick={() => setKeyCommandModalOpen(false)}>
-              {t('auth_files.key_command_background', { defaultValue: '返回后台' })}
-            </Button>
-          </div>
-        }
-      >
-        <div className={styles.keyCommandBody}>
-          <div className={styles.keyCommandPlatformRow}>
-            <span className={styles.keyCommandPlatformLabel}>
-              {t('auth_files.key_command_platform_label', { defaultValue: '平台' })}
-            </span>
-            <div className={styles.keyCommandPlatformToggle}>
-              <Button
-                variant={keyCommandPlatform === 'linux' ? 'primary' : 'secondary'}
-                size="sm"
-                onClick={() => setKeyCommandPlatform('linux')}
-              >
-                {t('auth_files.key_command_platform_linux', { defaultValue: 'Linux' })}
-              </Button>
-              <Button
-                variant={keyCommandPlatform === 'windows' ? 'primary' : 'secondary'}
-                size="sm"
-                onClick={() => setKeyCommandPlatform('windows')}
-              >
-                {t('auth_files.key_command_platform_windows', { defaultValue: 'Windows' })}
-              </Button>
-            </div>
-          </div>
-          <div className={styles.keyCommandInputGrid}>
-            <Input
-              label={t('auth_files.key_command_count_label', { defaultValue: '数量' })}
-              type="number"
-              min={1}
-              step={1}
-              value={keyCommandCount}
-              onChange={(e) => setKeyCommandCount(e.target.value)}
-            />
-            <Input
-              label={t('auth_files.key_command_concurrency_label', { defaultValue: '并发' })}
-              type="number"
-              min={1}
-              step={1}
-              value={keyCommandConcurrency}
-              onChange={(e) => setKeyCommandConcurrency(e.target.value)}
-            />
-          </div>
-
-          <div className={styles.keyCommandSection}>
-            <div className={styles.keyCommandSectionHeader}>
-              <div className={styles.keyCommandSectionTitle}>
-                {t('auth_files.key_command_step_one', { defaultValue: '第一步，生成密钥' })}
-              </div>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => void copyTextWithNotification(keyGenerateCommand)}
-              >
-                {t('common.copy')}
-              </Button>
-            </div>
-            <pre className={styles.keyCommandCodeBlock}>
-              <code>{keyGenerateCommand}</code>
-            </pre>
-          </div>
-
-          {keyCommandPlatform === 'linux' ? (
-            <div className={styles.keyCommandSection}>
-            <div className={styles.keyCommandSectionHeader}>
-              <div className={styles.keyCommandSectionTitle}>
-                {t('auth_files.key_command_step_two', {
-                  defaultValue: '第二步，复制到密钥目录',
-                })}
-              </div>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => void copyTextWithNotification(keyCopyCommand)}
-              >
-                {t('common.copy')}
-              </Button>
-            </div>
-            <pre className={styles.keyCommandCodeBlock}>
-              <code>{keyCopyCommand}</code>
-            </pre>
-            </div>
-          ) : null}
-        </div>
-      </Modal>
 
       {batchActionBarVisible && typeof document !== 'undefined'
         ? createPortal(
