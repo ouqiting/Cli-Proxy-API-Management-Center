@@ -1,6 +1,5 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useVirtualizer } from '@tanstack/react-virtual';
 import { Card } from '@/components/ui/Card';
 import { Modal } from '@/components/ui/Modal';
 import { usageApi, authFilesApi } from '@/services/api';
@@ -63,6 +62,7 @@ interface LogEntry {
   errorMessage?: string;
   upstreamErrorMessage?: string;
   inputTokens: number;
+  cachedTokens: number;
   outputTokens: number;
   totalTokens: number;
   authIndex: string;
@@ -79,9 +79,6 @@ interface PrecomputedStats {
   successRate: string;
   totalCount: number;
 }
-
-// 虚拟滚动行高
-const ROW_HEIGHT = 40;
 
 const stringifyData = (value: unknown): string => {
   if (value === null || value === undefined) return '';
@@ -138,18 +135,6 @@ export function RequestLogs({ data, loading: parentLoading, providerMap, provide
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // 用 ref 存储 fetchLogData，避免作为定时器 useEffect 的依赖
   const fetchLogDataRef = useRef<() => Promise<void>>(() => Promise.resolve());
-
-  // 虚拟滚动容器 ref
-  const tableContainerRef = useRef<HTMLDivElement>(null);
-  // 固定表头容器 ref
-  const headerRef = useRef<HTMLDivElement>(null);
-
-  // 同步表头和内容的水平滚动
-  const handleScroll = useCallback(() => {
-    if (tableContainerRef.current && headerRef.current) {
-      headerRef.current.scrollLeft = tableContainerRef.current.scrollLeft;
-    }
-  }, []);
 
   // 时间范围状态
   const [timeRange, setTimeRange] = useState<TimeRange>(7);
@@ -375,6 +360,7 @@ export function RequestLogs({ data, loading: parentLoading, providerMap, provide
             errorMessage: detail.error_message,
             upstreamErrorMessage: detail.upstream_error_message,
             inputTokens: detail.tokens.input_tokens || 0,
+            cachedTokens: detail.tokens.cached_tokens || 0,
             outputTokens: detail.tokens.output_tokens || 0,
             totalTokens: detail.tokens.total_tokens || 0,
             authIndex: detail.auth_index || '',
@@ -485,14 +471,6 @@ export function RequestLogs({ data, loading: parentLoading, providerMap, provide
     });
   }, [logEntries, filterApi, filterModel, filterSource, filterStatus, filterProviderType]);
 
-  // 虚拟滚动配置
-  const rowVirtualizer = useVirtualizer({
-    count: filteredEntries.length,
-    getScrollElement: () => tableContainerRef.current,
-    estimateSize: () => ROW_HEIGHT,
-    overscan: 10, // 预渲染上下各 10 行
-  });
-
   // 格式化数字
   const formatNumber = (num: number) => {
     return num.toLocaleString('zh-CN');
@@ -567,14 +545,11 @@ export function RequestLogs({ data, loading: parentLoading, providerMap, provide
     };
     const disabled = isCredentialDisabled(locator);
     const canToggle = canDisableCredential(locator);
-    // 将 authIndex 映射为文件名
-    const authDisplayName = entry.authIndex || '-';
+    const statusCode = getDisplayStatusCode(entry.statusCode, entry.upstreamStatusCode);
+    const showDetail = entry.failed && statusCode !== 200;
 
     return (
       <>
-        <td title={authDisplayName}>
-          {authDisplayName}
-        </td>
         <td title={entry.apiKey}>
           {maskSecret(entry.apiKey)}
         </td>
@@ -599,9 +574,9 @@ export function RequestLogs({ data, loading: parentLoading, providerMap, provide
         </td>
         <td>
           <div className={styles.logStatusCodes}>
-            {typeof getDisplayStatusCode(entry.statusCode, entry.upstreamStatusCode) === 'number' ? (
+            {typeof statusCode === 'number' ? (
               <span className={styles.logStatusBadge}>
-                {getDisplayStatusCode(entry.statusCode, entry.upstreamStatusCode)}
+                {statusCode}
               </span>
             ) : (
               '-'
@@ -624,22 +599,25 @@ export function RequestLogs({ data, loading: parentLoading, providerMap, provide
         <td>{formatNumber(stats.totalCount)}</td>
         <td>{formatLatencySeconds(entry.latencyMs)}</td>
         <td>{formatNumber(entry.inputTokens)}</td>
+        <td>{formatNumber(entry.cachedTokens)}</td>
         <td>{formatNumber(entry.outputTokens)}</td>
         <td>{formatNumber(entry.totalTokens)}</td>
+        <td>
+          {showDetail && (
+            <button
+              className={`${styles.detailBtn} btn btn-secondary btn-sm`}
+              title={t('common.details')}
+              onClick={() => {
+                void openDetail(entry);
+              }}
+            >
+              {t('common.details')}
+            </button>
+          )}
+        </td>
         <td>{formatTimestamp(entry.timestamp)}</td>
         <td>
           <div className={styles.rowActions}>
-            {entry.failed && (
-              <button
-                className={`${styles.detailBtn} btn btn-secondary btn-sm`}
-                title={t('common.details')}
-                onClick={() => {
-                  void openDetail(entry);
-                }}
-              >
-                {t('common.details')}
-              </button>
-            )}
             {canToggle ? (
               disabled ? (
                 <span className={styles.disabledLabel}>
@@ -655,7 +633,7 @@ export function RequestLogs({ data, loading: parentLoading, providerMap, provide
                 </button>
               )
             ) : (
-              !entry.failed && '-'
+              '-'
             )}
           </div>
         </td>
@@ -755,85 +733,45 @@ export function RequestLogs({ data, loading: parentLoading, providerMap, provide
           </select>
         </div>
 
-        {/* 虚拟滚动表格 */}
+        {/* 表格 */}
         <div className={styles.tableWrapper}>
           {showLoading ? (
             <div className={styles.emptyState}>{t('common.loading')}</div>
           ) : filteredEntries.length === 0 ? (
             <div className={styles.emptyState}>{t('monitor.no_data')}</div>
           ) : (
-            <>
-              {/* 固定表头 */}
-              <div ref={headerRef} className={styles.stickyHeader}>
-                <table className={`${styles.table} ${styles.virtualTable}`}>
-                  <thead>
-                    <tr>
-                      <th>{t('monitor.logs.header_auth')}</th>
-                      <th>{t('monitor.logs.header_api')}</th>
-                      <th>{t('monitor.logs.header_request_type')}</th>
-                      <th>{t('monitor.logs.header_model')}</th>
-                      <th>{t('monitor.logs.header_source')}</th>
-                      <th>{t('monitor.logs.header_status')}</th>
-                      <th>{t('monitor.logs.header_status_codes')}</th>
-                      <th>{t('monitor.logs.header_recent')}</th>
-                      <th>{t('monitor.logs.header_rate')}</th>
-                      <th>{t('monitor.logs.header_count')}</th>
-                      <th>{t('monitor.logs.header_latency')}</th>
-                      <th>{t('monitor.logs.header_input')}</th>
-                      <th>{t('monitor.logs.header_output')}</th>
-                      <th>{t('monitor.logs.header_total')}</th>
-                      <th>{t('monitor.logs.header_time')}</th>
-                      <th>{t('monitor.logs.header_actions')}</th>
+            <div className={styles.requestEventsTableWrapper}>
+              <table className={`${styles.table} ${styles.virtualTable}`}>
+                <thead>
+                  <tr>
+                    <th>{t('monitor.logs.header_api')}</th>
+                    <th>{t('monitor.logs.header_request_type')}</th>
+                    <th>{t('monitor.logs.header_model')}</th>
+                    <th>{t('monitor.logs.header_source')}</th>
+                    <th>{t('monitor.logs.header_status')}</th>
+                    <th>{t('monitor.logs.header_status_codes')}</th>
+                    <th>{t('monitor.logs.header_recent')}</th>
+                    <th>{t('monitor.logs.header_rate')}</th>
+                    <th>{t('monitor.logs.header_count')}</th>
+                    <th>{t('monitor.logs.header_latency')}</th>
+                    <th>{t('monitor.logs.header_input')}</th>
+                    <th>{t('monitor.logs.header_cache')}</th>
+                    <th>{t('monitor.logs.header_output')}</th>
+                    <th>{t('monitor.logs.header_total')}</th>
+                    <th>{t('common.details')}</th>
+                    <th>{t('monitor.logs.header_time')}</th>
+                    <th>{t('monitor.logs.header_actions')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredEntries.map((entry) => (
+                    <tr key={entry.id}>
+                      {renderRow(entry)}
                     </tr>
-                  </thead>
-                </table>
-              </div>
-
-              {/* 虚拟滚动容器 */}
-              <div
-                ref={tableContainerRef}
-                className={styles.virtualScrollContainer}
-                style={{
-                  height: 'calc(100vh - 420px)',
-                  minHeight: '360px',
-                  overflow: 'auto',
-                }}
-                onScroll={handleScroll}
-              >
-                <div
-                  style={{
-                    height: `${rowVirtualizer.getTotalSize()}px`,
-                    width: '100%',
-                    position: 'relative',
-                  }}
-                >
-                  <table className={`${styles.table} ${styles.virtualTable}`}>
-                    <tbody>
-                      {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-                        const entry = filteredEntries[virtualRow.index];
-                        return (
-                          <tr
-                            key={entry.id}
-                            style={{
-                              position: 'absolute',
-                              top: 0,
-                              left: 0,
-                              width: '100%',
-                              height: `${virtualRow.size}px`,
-                              transform: `translateY(${virtualRow.start}px)`,
-                              display: 'table',
-                              tableLayout: 'fixed',
-                            }}
-                          >
-                            {renderRow(entry)}
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
 

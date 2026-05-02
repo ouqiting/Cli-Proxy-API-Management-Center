@@ -33,7 +33,11 @@ import {
   writeQuotaSnapshot,
 } from '@/services/quotaSnapshot';
 import { formatDateTime, maskApiKey } from '@/utils/format';
-import { getStatusFromError } from '@/utils/quota';
+import {
+  buildCodexPriorityAssignments,
+  getStatusFromError,
+  persistCodexPriorityAssignments,
+} from '@/utils/quota';
 import styles from './QuotaPage.module.scss';
 
 const VERCEL_GATEWAY_BASE_URL = 'https://ai-gateway.vercel.sh/v1';
@@ -206,6 +210,29 @@ type QuotaStateWithStatus = {
 const hasLoadingQuota = <TState extends QuotaStateWithStatus>(
   map: QuotaStateMap<TState>
 ): boolean => Object.values(map).some((item) => item.status === 'loading');
+
+const collectCodexPriorityAssignments = (
+  codexFiles: AuthFileItem[],
+  codexQuota: Record<string, any>
+) =>
+  buildCodexPriorityAssignments(
+    codexFiles.flatMap((file) => {
+      const quota = codexQuota[file.name];
+      if (!quota || quota.status !== 'success' || !Array.isArray(quota.windows)) {
+        return [];
+      }
+
+      return [
+        {
+          file,
+          data: {
+            planType: typeof quota.planType === 'string' ? quota.planType : null,
+            windows: quota.windows,
+          },
+        },
+      ];
+    })
+  );
 
 export function QuotaPage() {
   const { t, i18n } = useTranslation();
@@ -645,11 +672,12 @@ export function QuotaPage() {
     if (codexWeeklyLimitLoading) return;
 
     const { weeklyCandidates, keepNames, disableTargets, restoreTargets } = codexWeeklyLimitPlan;
+    const priorityAssignments = collectCodexPriorityAssignments(codexFiles, codexQuota);
 
-    if (weeklyCandidates.length === 0) {
+    if (weeklyCandidates.length === 0 && priorityAssignments.length === 0) {
       showNotification(
         t('quota_management.codex_weekly_limit_missing', {
-          defaultValue: '当前没有可用的 Codex 周限额数据，请先刷新额度',
+          defaultValue: '当前没有可用的 Codex 周限额或余额数据，请先刷新额度',
         }),
         'warning'
       );
@@ -662,10 +690,10 @@ export function QuotaPage() {
       return false;
     });
 
-    if (changes.length === 0) {
+    if (changes.length === 0 && priorityAssignments.length === 0) {
       showNotification(
         t('quota_management.codex_weekly_limit_no_change', {
-          defaultValue: '已按周限额规则整理，无需变更',
+          defaultValue: '已按余额调整完成，周限额状态与优先级均无需变更',
         }),
         'info'
       );
@@ -674,9 +702,12 @@ export function QuotaPage() {
 
     setCodexWeeklyLimitLoading(true);
     try {
-      const results = await Promise.allSettled(
-        changes.map((file) => authFilesApi.setStatus(file.name, disableTargets.has(file.name)))
-      );
+      const results =
+        changes.length > 0
+          ? await Promise.allSettled(
+              changes.map((file) => authFilesApi.setStatus(file.name, disableTargets.has(file.name)))
+            )
+          : [];
 
       let successCount = 0;
       let failedCount = 0;
@@ -688,23 +719,34 @@ export function QuotaPage() {
         }
       });
 
+      const priorityResult =
+        priorityAssignments.length > 0
+          ? await persistCodexPriorityAssignments(priorityAssignments)
+          : { updatedCount: 0, failedResults: [] };
+      const priorityFailedCount = priorityResult.failedResults.length;
+
       await Promise.all([loadFiles(), refreshDisabledCredentialsSnapshot(true)]);
 
-      if (failedCount === 0) {
+      if (failedCount === 0 && priorityFailedCount === 0) {
         showNotification(
           t('quota_management.codex_weekly_limit_success', {
-            defaultValue: '已按周限额自动整理凭证：保留 {{kept}} 个，禁用 {{disabled}} 个',
+            defaultValue:
+              '已按余额调整凭证：保留 {{kept}} 个，禁用 {{disabled}} 个，已写入优先级 {{priorityWritten}} 个',
             kept: keepNames.size,
             disabled: disableTargets.size,
+            priorityWritten: priorityResult.updatedCount,
           }),
           'success'
         );
       } else {
         showNotification(
           t('quota_management.codex_weekly_limit_partial', {
-            defaultValue: '周限额整理已完成：成功 {{success}} 个，失败 {{failed}} 个',
+            defaultValue:
+              '按余额调整已完成：周限额成功 {{success}} 个，失败 {{failed}} 个，已写入优先级 {{priorityWritten}} 个，优先级写入失败 {{priorityFailed}} 个',
             success: successCount,
             failed: failedCount,
+            priorityWritten: priorityResult.updatedCount,
+            priorityFailed: priorityFailedCount,
           }),
           'warning'
         );
@@ -717,6 +759,7 @@ export function QuotaPage() {
     }
   }, [
     codexFiles,
+    codexQuota,
     codexWeeklyLimitPlan,
     codexWeeklyLimitLoading,
     loadFiles,
@@ -927,7 +970,7 @@ export function QuotaPage() {
               loading={codexWeeklyLimitLoading}
             >
               {t('quota_management.codex_weekly_limit_disable', {
-                defaultValue: '按周限额禁用',
+                defaultValue: '按余额调整',
               })}
             </Button>
             <Button

@@ -15,6 +15,41 @@ import { createStatusError, formatCodexResetLabel } from './formatters';
 import { normalizeNumberValue, normalizePlanType, parseCodexUsagePayload } from './parsers';
 import { resolveCodexChatgptAccountId, resolveCodexPlanType } from './resolvers';
 
+export type CodexQuotaQueryResult = {
+  planType: string | null;
+  windows: CodexQuotaWindow[];
+};
+
+export type CodexPriorityAssignment = {
+  file: AuthFileItem;
+  planType: string | null;
+  priority: number;
+  remainingPercent: number | null;
+};
+
+export type PersistCodexPriorityAssignmentsResult = {
+  updatedCount: number;
+  failedResults: Array<{ fileName: string; message: string }>;
+};
+
+const AUTH_FILE_RUNTIME_ONLY_KEYS = new Set([
+  'name',
+  'size',
+  'source',
+  'path',
+  'runtimeOnly',
+  'runtime_only',
+  'disabled',
+  'unavailable',
+  'status',
+  'statusMessage',
+  'lastRefresh',
+  'last_refresh',
+  'modified',
+  'modtime',
+  'updated_at',
+]);
+
 const FIVE_HOUR_SECONDS = 18000;
 const WEEK_SECONDS = 604800;
 
@@ -231,11 +266,124 @@ export const resolveCodexBulkFailureMessage = (
   return null;
 };
 
+const clampPercent = (value: number): number => Math.min(100, Math.max(0, value));
+
+const resolveCodexPlanPriorityGroup = (planType: string | null): number => {
+  const normalizedPlanType = normalizePlanType(planType) ?? '';
+  if (normalizedPlanType.includes('free')) return 0;
+  if (normalizedPlanType.includes('plus') || normalizedPlanType.includes('pro')) return 1;
+  return 1;
+};
+
+export const resolveCodexRemainingPercent = (windows: CodexQuotaWindow[]): number | null => {
+  const remainingPercents = windows
+    .map((window) => normalizeNumberValue(window.usedPercent))
+    .filter((value): value is number => value !== null)
+    .map((usedPercent) => clampPercent(100 - usedPercent));
+
+  if (remainingPercents.length === 0) {
+    return null;
+  }
+
+  return Math.min(...remainingPercents);
+};
+
+export const buildCodexPriorityAssignments = (
+  entries: Array<{ file: AuthFileItem; data: CodexQuotaQueryResult }>
+): CodexPriorityAssignment[] => {
+  const sortedEntries = [...entries].sort((left, right) => {
+    const planGroupDiff =
+      resolveCodexPlanPriorityGroup(left.data.planType) -
+      resolveCodexPlanPriorityGroup(right.data.planType);
+    if (planGroupDiff !== 0) return planGroupDiff;
+
+    const leftRemainingPercent = resolveCodexRemainingPercent(left.data.windows);
+    const rightRemainingPercent = resolveCodexRemainingPercent(right.data.windows);
+    const normalizedLeftRemaining =
+      leftRemainingPercent === null ? Number.POSITIVE_INFINITY : leftRemainingPercent;
+    const normalizedRightRemaining =
+      rightRemainingPercent === null ? Number.POSITIVE_INFINITY : rightRemainingPercent;
+
+    if (normalizedLeftRemaining !== normalizedRightRemaining) {
+      return normalizedLeftRemaining - normalizedRightRemaining;
+    }
+
+    return left.file.name.localeCompare(right.file.name, undefined, {
+      sensitivity: 'accent',
+    });
+  });
+
+  const total = sortedEntries.length;
+  return sortedEntries.map((entry, index) => ({
+    file: entry.file,
+    planType: entry.data.planType,
+    priority: total - index,
+    remainingPercent: resolveCodexRemainingPercent(entry.data.windows),
+  }));
+};
+
+export const persistCodexPriorityAssignments = async (
+  assignments: CodexPriorityAssignment[]
+): Promise<PersistCodexPriorityAssignmentsResult> => {
+  const failedResults: Array<{ fileName: string; message: string }> = [];
+  let updatedCount = 0;
+
+  const results = await Promise.allSettled(
+    assignments.map(async (assignment) => {
+      const currentPriority = assignment.file.priority;
+      const normalizedCurrentPriority =
+        typeof currentPriority === 'number'
+          ? currentPriority
+          : typeof currentPriority === 'string' && currentPriority.trim()
+            ? Number(currentPriority)
+            : null;
+
+      if (normalizedCurrentPriority === assignment.priority) {
+        return;
+      }
+
+      const fileJson = Object.entries(assignment.file).reduce<Record<string, unknown>>(
+        (result, [key, value]) => {
+          if (AUTH_FILE_RUNTIME_ONLY_KEYS.has(key)) {
+            return result;
+          }
+          if (value === undefined) {
+            return result;
+          }
+          result[key] = value;
+          return result;
+        },
+        {}
+      );
+
+      await authFilesApi.saveJsonObject(assignment.file.name, {
+        ...fileJson,
+        priority: assignment.priority,
+      });
+      updatedCount += 1;
+    })
+  );
+
+  results.forEach((result, index) => {
+    if (result.status === 'fulfilled') {
+      return;
+    }
+
+    const reason = result.reason;
+    failedResults.push({
+      fileName: assignments[index]?.file.name ?? 'Unknown',
+      message: reason instanceof Error ? reason.message : 'Unknown error',
+    });
+  });
+
+  return { updatedCount, failedResults };
+};
+
 export const fetchCodexQuotaData = async (
   file: AuthFileItem,
   t: TFunction,
   requestConfig?: AxiosRequestConfig
-): Promise<{ planType: string | null; windows: CodexQuotaWindow[] }> => {
+): Promise<CodexQuotaQueryResult> => {
   const rawAuthIndex = file['auth_index'] ?? file.authIndex;
   const authIndex = normalizeAuthIndex(rawAuthIndex);
   if (!authIndex) {
